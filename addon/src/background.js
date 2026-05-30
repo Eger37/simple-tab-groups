@@ -71,7 +71,7 @@ self.loggerFuncs = {
     clearErrors,
 };
 
-self.options = {};
+const options = self.options = {};
 
 let ignoreExtForReopenContainer = new Set([...Constants.SAFE_EXTENSIONS_FOR_REOPEN_TAB_IN_CONTAINER]),
 
@@ -690,7 +690,7 @@ function removeEvents() {
     removeListenerOnBeforeRequest();
 }
 
-self.sendMessageFromBackground = Messages.sendMessageFromBackground;
+const sendMessageFromBackground = self.sendMessageFromBackground = Messages.sendMessageFromBackground;
 
 Listeners.runtime.onConnect.add(Messages.createListenerOnConnectedBackground(onBackgroundMessage));
 Listeners.runtime.onMessage.add(onBackgroundMessage);
