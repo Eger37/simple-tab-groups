@@ -73,52 +73,7 @@ self.loggerFuncs = {
 
 const options = self.options = {};
 
-let ignoreExtForReopenContainer = new Set([...Constants.SAFE_EXTENSIONS_FOR_REOPEN_TAB_IN_CONTAINER]),
-
-    groupsHistory = (function () {
-        let index = -1,
-            groupIds = [];
-
-        function normalize(groups) {
-            groupIds = groupIds.filter((groupId, groupIndex) => {
-                const found = groups.some(group => group.id === groupId);
-
-                if (!found) {
-                    if (groupIndex < index) {
-                        index--;
-                    }
-                }
-
-                return found;
-            });
-
-            if (index > groupIds.length - 1) {
-                index = groupIds.length - 1;
-            }
-        }
-
-        return {
-            next(groups) {
-                normalize(groups);
-
-                if (groupIds[index + 1]) {
-                    return groupIds[++index];
-                }
-            },
-            prev(groups) {
-                normalize(groups);
-
-                if (groupIds[index - 1]) {
-                    return groupIds[--index];
-                }
-            },
-            add(groupId) {
-                const nextIndex = index + 1;
-                groupIds.splice(nextIndex, groupIds.length - index, groupId);
-                index = nextIndex;
-            },
-        };
-    })();
+const ignoreExtForReopenContainer = new Set([...Constants.SAFE_EXTENSIONS_FOR_REOPEN_TAB_IN_CONTAINER]);
 
 // TODO temp
 self.CacheTabs = Cache.tabs;
@@ -138,272 +93,6 @@ function sendExternalMessage(...args) {
             Messages.sendExternalMessage(exId, message);
         }
     }
-}
-
-let _loadingGroupInWindow = new Set; // windowId: true;
-async function applyGroup(windowId, groupId, activeTabId, applyFromHistory = false) {
-    const log = logger.start('applyGroup', 'groupId:', groupId, 'windowId:', windowId, 'activeTabId:', activeTabId);
-
-    windowId = windowId || await Windows.getLastFocusedNormalWindow();
-
-    if (!windowId) {
-        log.stopError('no window was found for applyGroup');
-        return false;
-    } else if (_loadingGroupInWindow.has(windowId)) {
-        log.stopWarn('window in loading state now', windowId);
-        return false;
-    }
-
-    _loadingGroupInWindow.add(windowId);
-
-    const groupWindowId = Cache.getWindowId(groupId);
-
-    let result = null;
-
-    try {
-        const addTabs = [];
-
-        if (groupWindowId) {
-            if (activeTabId) {
-                Tabs.setActive(activeTabId);
-            }
-
-            Windows.setFocus(groupWindowId);
-        } else {
-            // magic
-
-            const { group: groupToShow, groups } = await Groups.load(groupId, true),
-                oldGroupId = Cache.getWindowGroup(windowId),
-                groupToHide = groups.find(gr => gr.id === oldGroupId),
-                tabsIdsToRemove = new Set;
-
-            if (!groupToShow) {
-                log.throwError('groupToShow not found');
-            }
-
-            if (groupToShow.isArchive) {
-                Notification(['groupIsArchived', groupToShow.title]);
-                throw '';
-            }
-
-            if (groupToHide?.tabs.some(Tabs.isCanNotBeHidden)) {
-                Notification('notPossibleSwitchGroupBecauseSomeTabShareMicrophoneOrCamera');
-                throw '';
-            }
-
-            await Browser.actionLoading();
-
-            // show tabs
-            if (groupToShow.tabs.length) {
-                if (groupToShow.tabs.some(tab => tab.windowId !== windowId)) {
-                    groupToShow.tabs = await Tabs.moveNative(groupToShow.tabs, {
-                        index: -1,
-                        windowId: windowId,
-                    }, true);
-                }
-
-                await Tabs.show(groupToShow.tabs, true);
-
-                if (groupToShow.muteTabsWhenGroupCloseAndRestoreWhenOpen) {
-                    await Tabs.setMute(groupToShow.tabs, false);
-                }
-            }
-
-            // link group with window
-            await Cache.setWindowGroup(windowId, groupToShow.id);
-
-            // hide tabs
-            await hideTabs(groupToHide?.tabs);
-
-            const activeTabGroupToHide = groupToHide?.tabs.find(tab => tab.active);
-
-            async function hideTabs(tabs = []) {
-                await Tabs.hide(tabs, true);
-
-                if (groupToHide) {
-                    if (groupToHide.muteTabsWhenGroupCloseAndRestoreWhenOpen) {
-                        await Tabs.setMute(tabs, true);
-                    }
-
-                    if (groupToHide.discardTabsAfterHide) {
-                        if (groupToHide.discardExcludeAudioTabs) {
-                            tabs = tabs.filter(tab => !tab.audible);
-                        }
-
-                        await Tabs.discard(tabs);
-                    }
-                }
-            }
-
-            async function hideUnSyncTabs(tabs) {
-                if (!tabs.length) {
-                    return;
-                }
-
-                await Tabs.hide(tabs, true);
-
-                let showNotif = storage.showTabsInThisWindowWereHidden ?? 0;
-                if (showNotif < 5) {
-                    storage.showTabsInThisWindowWereHidden = ++showNotif;
-                    Notification('tabsInThisWindowWereHidden');
-                }
-            }
-
-            // set active tab
-            if (activeTabId) {
-                await Tabs.setActive(activeTabId);
-
-                if (!groupToHide) {
-                    let tabs = await Tabs.get(windowId);
-
-                    tabs = tabs.filter(tab => !tab.groupId);
-
-                    if (tabs.length === 1 && Utils.isUrlEmpty(tabs[0].url)) {
-                        tabsIdsToRemove.add(tabs[0].id);
-                    } else {
-                        await hideUnSyncTabs(tabs);
-                    }
-                }
-            } else if (groupToHide) {
-                if (activeTabGroupToHide) {
-                    let tabToActive = await Tabs.setActive(null, groupToShow.tabs);
-
-                    if (!tabToActive) {
-                        // group to show has no any tabs, try select pinned tab or create new one
-                        let pinnedTabs = await Tabs.get(windowId, true),
-                            activePinnedTab = await Tabs.setActive(null, pinnedTabs);
-
-                        if (!activePinnedTab) {
-                            await Tabs.create({
-                                active: true,
-                                windowId,
-                                ...Groups.getNewTabParams(groupToShow),
-                            }, true);
-                        }
-                    }
-                } else {
-                    // some pinned tab active, do nothing
-                }
-            } else {
-                let tabs = await Tabs.get(windowId, null); // get tabs with pinned
-
-                // remove tabs without group
-                tabs = tabs.filter(tab => !tab.groupId);
-
-                let activePinnedTab = await Tabs.setActive(null, tabs.filter(tab => tab.pinned));
-
-                // find other not pinned tabs
-                tabs = tabs.filter(tab => !tab.pinned);
-
-                if (activePinnedTab) {
-                    await hideUnSyncTabs(tabs);
-                } else {
-                    // no pinned tabs found, some tab without group is active
-
-                    if (groupToShow.tabs.length) {
-                        // set active group tab
-                        await Tabs.setActive(null, groupToShow.tabs);
-
-                        // if has one empty tab - remove it
-                        if (tabs.length === 1 && Utils.isUrlEmpty(tabs[0].url)) {
-                            tabsIdsToRemove.add(tabs[0].id);
-                        } else {
-                            await hideUnSyncTabs(tabs);
-                        }
-                    } else {
-                        if (tabs.length === 1 && Utils.isUrlEmpty(tabs[0].url)) {
-                            await Cache.setTabGroup(tabs[0].id, groupToShow.id)
-                                .catch(log.onCatch(["can't set group", groupToShow.id, tabs[0]], false));
-                            addTabs.push(Cache.applyTabSession(tabs[0]));
-                        } else {
-                            await Tabs.create({
-                                active: true,
-                                windowId,
-                                ...Groups.getNewTabParams(groupToShow),
-                            }, true);
-
-                            await hideUnSyncTabs(tabs);
-                        }
-                    }
-                }
-            }
-
-            if (groupToHide) {
-                if (activeTabGroupToHide) {
-                    await hideTabs([activeTabGroupToHide]);
-                }
-
-                groupToHide.tabs.forEach(tab => tab.url.startsWith(Constants.PAGES.MANAGE) && tabsIdsToRemove.add(tab.id));
-            }
-
-            await Tabs.remove(Array.from(tabsIdsToRemove));
-
-            await MenusMain.groupLoaded(groupToShow, windowId);
-
-            if (groupToHide) {
-                await MenusMain.updateGroup(groupToHide);
-            }
-
-            await Browser.actionLoading(false);
-
-            if (!applyFromHistory) {
-                groupsHistory.add(groupId);
-            }
-        }
-
-        Groups.sendLoaded(groupId, windowId, addTabs);
-
-        result = true;
-    } catch (e) {
-        result = false;
-
-        if (e) {
-            errorEventHandler.call(log, e);
-
-            await Browser.actionGroup(null, windowId);
-
-            if (!groupWindowId) {
-                Tabs.clearSkipTracking();
-            }
-        }
-    } finally {
-        _loadingGroupInWindow.delete(windowId);
-    }
-
-    result ? log.stop() : log.stopError();
-
-    return result;
-}
-
-async function applyGroupByPosition(textPosition, groups, currentGroupId) {
-    if (1 >= groups.length || !currentGroupId) {
-        return false;
-    }
-
-    let currentGroupIndex = groups.findIndex(group => group.id === currentGroupId);
-
-    if (-1 === currentGroupIndex) {
-        currentGroupIndex = 'next' === textPosition ? (groups.length - 1) : 0;
-    }
-
-    let nextGroupIndex = Utils.getNextIndex(currentGroupIndex, groups.length, textPosition);
-
-    return applyGroup(undefined, groups[nextGroupIndex].id);
-}
-
-
-async function applyGroupByHistory(textPosition, groups) {
-    if (1 >= groups.length) {
-        return false;
-    }
-
-    let nextGroupId = 'next' === textPosition ? groupsHistory.next(groups) : groupsHistory.prev(groups);
-
-    if (!nextGroupId) {
-        return false;
-    }
-
-    return applyGroup(undefined, nextGroupId, undefined, true);
 }
 
 const moveTabsBatch = new BatchProcessor(async (tabIds, groupId) => {
@@ -867,49 +556,49 @@ async function onBackgroundMessage(message, sender) {
                 result.ok = true;
                 break;
             case 'load-next-group':
-                result.ok = await applyGroupByPosition('next', notArchivedGroups, currentGroup?.id);
+                result.ok = await Groups.applyByPosition('next', notArchivedGroups, currentGroup?.id);
                 break;
             case 'load-prev-group':
-                result.ok = await applyGroupByPosition('prev', notArchivedGroups, currentGroup?.id);
+                result.ok = await Groups.applyByPosition('prev', notArchivedGroups, currentGroup?.id);
                 break;
             case 'load-next-unloaded-group':
                 {
                     let unloadedGroups = notArchivedGroups.filter(group => !Cache.getWindowId(group.id) || group.id === currentGroup?.id);
-                    result.ok = await applyGroupByPosition('next', unloadedGroups, currentGroup?.id);
+                    result.ok = await Groups.applyByPosition('next', unloadedGroups, currentGroup?.id);
                 }
                 break;
             case 'load-prev-unloaded-group':
                 {
                     let unloadedGroups = notArchivedGroups.filter(group => !Cache.getWindowId(group.id) || group.id === currentGroup?.id);
-                    result.ok = await applyGroupByPosition('prev', unloadedGroups, currentGroup?.id);
+                    result.ok = await Groups.applyByPosition('prev', unloadedGroups, currentGroup?.id);
                 }
                 break;
             case 'load-next-non-empty-group':
                 {
                     const { notArchivedGroups } = await Groups.load(null, true);
-                    result.ok = await applyGroupByPosition('next', notArchivedGroups.filter(group => group.tabs.length), currentGroup?.id);
+                    result.ok = await Groups.applyByPosition('next', notArchivedGroups.filter(group => group.tabs.length), currentGroup?.id);
                 }
                 break;
             case 'load-prev-non-empty-group':
                 {
                     const { notArchivedGroups } = await Groups.load(null, true);
-                    result.ok = await applyGroupByPosition('prev', notArchivedGroups.filter(group => group.tabs.length), currentGroup?.id);
+                    result.ok = await Groups.applyByPosition('prev', notArchivedGroups.filter(group => group.tabs.length), currentGroup?.id);
                 }
                 break;
             case 'load-history-next-group':
-                result.ok = await applyGroupByHistory('next', notArchivedGroups);
+                result.ok = await Groups.applyByHistory('next', notArchivedGroups);
                 break;
             case 'load-history-prev-group':
-                result.ok = await applyGroupByHistory('prev', notArchivedGroups);
+                result.ok = await Groups.applyByHistory('prev', notArchivedGroups);
                 break;
             case 'load-first-group':
                 if (notArchivedGroups.length) {
-                    result.ok = await applyGroup(currentWindow.id, notArchivedGroups.shift().id);
+                    result.ok = await Groups.apply(currentWindow.id, notArchivedGroups.shift().id);
                 }
                 break;
             case 'load-last-group':
                 if (notArchivedGroups.length) {
-                    result.ok = await applyGroup(currentWindow.id, notArchivedGroups.pop().id);
+                    result.ok = await Groups.apply(currentWindow.id, notArchivedGroups.pop().id);
                 }
                 break;
             case 'load-custom-group':
@@ -920,7 +609,7 @@ async function onBackgroundMessage(message, sender) {
                     }, sender);
 
                     if (ok) {
-                        result.ok = await applyGroup(currentWindow.id, group.id);
+                        result.ok = await Groups.apply(currentWindow.id, group.id);
                     }
                 } else if (data.groupId) {
                     let groupToLoad = groups.find(group => group.id === data.groupId);
@@ -935,12 +624,12 @@ async function onBackgroundMessage(message, sender) {
                                     await Windows.create(data.groupId, data.tabId);
                                     result.ok = true;
                                 } else if (Number.isSafeInteger(data.windowId) && data.windowId > 0) {
-                                    result.ok = await applyGroup(data.windowId, data.groupId, data.tabId);
+                                    result.ok = await Groups.apply(data.windowId, data.groupId, data.tabId);
                                 } else {
                                     result.error = 'Invalid window id';
                                 }
                             } else {
-                                result.ok = await applyGroup(currentWindow.id, data.groupId, data.tabId);
+                                result.ok = await Groups.apply(currentWindow.id, data.groupId, data.tabId);
                             }
                         }
                     } else {
@@ -1901,7 +1590,6 @@ async function cloudSync({
 
 self.sendExternalMessage = sendExternalMessage;
 
-self.applyGroup = applyGroup;
 
 self.addListenerOnBeforeRequest = addListenerOnBeforeRequest;
 self.removeListenerOnBeforeRequest = removeListenerOnBeforeRequest;
@@ -2138,7 +1826,7 @@ async function init() {
 
         await initializeGroupWindows(windows, data.groups.map(g => g.id));
 
-        windows.filter(win => win.groupId).forEach(win => groupsHistory.add(win.groupId));
+        windows.filter(win => win.groupId).forEach(win => Groups.addToHistory(win.groupId));
 
         let tabs = Utils.flatTabs(windows);
 

@@ -285,7 +285,7 @@ export async function openInGroup(groupId, info) {
         Tabs.sendUpdatedGroup(groupId);
 
         if (info.button.RIGHT) {
-            await self.applyGroup(undefined, groupId, createdTabs[0].id);
+            await Groups.apply(undefined, groupId, createdTabs[0].id);
         } else {
             // Notification(['tabsCreatedCount', tabsToCreate.length]);
         }
@@ -332,7 +332,7 @@ export async function createNewGroup(info) {
             const newTab = await Tabs.add(group.id, undefined, bookmark.url, bookmark.title);
 
             if (info.button.RIGHT) {
-                await self.applyGroup(undefined, group.id, newTab.id);
+                await Groups.apply(undefined, group.id, newTab.id);
             }
         }
     } else if (bookmark.type === Bookmarks.FOLDER) {

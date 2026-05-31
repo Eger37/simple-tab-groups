@@ -1,6 +1,6 @@
 import './prefixed-storage.js';
 
-import Logger from './logger.js';
+import Logger, {errorEventHandler} from './logger.js';
 import backgroundSelf from './background.js';
 import * as GroupsBroadcast from './broadcast.js?channel=groups';
 import * as Constants from './constants.js';
@@ -17,6 +17,7 @@ import * as MenusMain from './menus-main.js';
 // import * as Messages from './messages.js';
 // import JSON from './json.js';
 import * as Tabs from './tabs.js';
+import * as Windows from './windows.js';
 import * as Utils from './utils.js';
 
 export {on, off} from './broadcast.js?channel=groups';
@@ -24,6 +25,321 @@ export {on, off} from './broadcast.js?channel=groups';
 const logger = new Logger(Constants.MODULES.GROUPS);
 
 const mainStorage = localStorage.create(Constants.MODULES.BACKGROUND);
+
+const windowsWithLoadingGroups = new Set();
+
+const groupsHistory = (function () {
+    let index = -1,
+        groupIds = [];
+
+    function normalize(groups) {
+        groupIds = groupIds.filter((groupId, groupIndex) => {
+            const found = groups.some(group => group.id === groupId);
+
+            if (!found) {
+                if (groupIndex < index) {
+                    index--;
+                }
+            }
+
+            return found;
+        });
+
+        if (index > groupIds.length - 1) {
+            index = groupIds.length - 1;
+        }
+    }
+
+    return {
+        next(groups) {
+            normalize(groups);
+
+            if (groupIds[index + 1]) {
+                return groupIds[++index];
+            }
+        },
+        prev(groups) {
+            normalize(groups);
+
+            if (groupIds[index - 1]) {
+                return groupIds[--index];
+            }
+        },
+        add(groupId) {
+            const nextIndex = index + 1;
+            groupIds.splice(nextIndex, groupIds.length - index, groupId);
+            index = nextIndex;
+        },
+    };
+})();
+
+export function addToHistory(groupId) {
+    groupsHistory.add(groupId);
+}
+
+export async function applyByPosition(textPosition, groups, currentGroupId) {
+    if (1 >= groups.length || !currentGroupId) {
+        return false;
+    }
+
+    let currentGroupIndex = groups.findIndex(group => group.id === currentGroupId);
+
+    if (-1 === currentGroupIndex) {
+        currentGroupIndex = 'next' === textPosition ? (groups.length - 1) : 0;
+    }
+
+    let nextGroupIndex = Utils.getNextIndex(currentGroupIndex, groups.length, textPosition);
+
+    return apply(undefined, groups[nextGroupIndex].id);
+}
+
+export async function applyByHistory(textPosition, groups) {
+    if (1 >= groups.length) {
+        return false;
+    }
+
+    let nextGroupId = 'next' === textPosition ? groupsHistory.next(groups) : groupsHistory.prev(groups);
+
+    if (!nextGroupId) {
+        return false;
+    }
+
+    return apply(undefined, nextGroupId, undefined, true);
+}
+
+export async function apply(windowId, groupId, activeTabId, applyFromHistory = false) {
+    const log = logger.start(apply, 'groupId:', groupId, 'windowId:', windowId, 'activeTabId:', activeTabId);
+
+    windowId ||= await Windows.getLastFocusedNormalWindow();
+
+    if (!windowId) {
+        log.stopError('no window was found for apply');
+        return false;
+    } else if (windowsWithLoadingGroups.has(windowId)) {
+        log.stopWarn('window in loading state now', windowId);
+        return false;
+    }
+
+    windowsWithLoadingGroups.add(windowId);
+
+    const groupWindowId = Cache.getWindowId(groupId);
+
+    let result = null;
+
+    try {
+        const addTabs = [];
+
+        if (groupWindowId) {
+            if (activeTabId) {
+                Tabs.setActive(activeTabId);
+            }
+
+            Windows.setFocus(groupWindowId);
+        } else {
+            // magic
+
+            const {group: groupToShow, groups} = await load(groupId, true),
+                oldGroupId = Cache.getWindowGroup(windowId),
+                groupToHide = groups.find(gr => gr.id === oldGroupId),
+                tabsIdsToRemove = new Set;
+
+            if (!groupToShow) {
+                log.throwError('groupToShow not found');
+            }
+
+            if (groupToShow.isArchive) {
+                Notification(['groupIsArchived', groupToShow.title]);
+                throw '';
+            }
+
+            if (groupToHide?.tabs.some(Tabs.isCanNotBeHidden)) {
+                Notification('notPossibleSwitchGroupBecauseSomeTabShareMicrophoneOrCamera');
+                throw '';
+            }
+
+            await Browser.actionLoading();
+
+            // show tabs
+            if (groupToShow.tabs.length) {
+                if (groupToShow.tabs.some(tab => tab.windowId !== windowId)) {
+                    groupToShow.tabs = await Tabs.moveNative(groupToShow.tabs, {
+                        index: -1,
+                        windowId: windowId,
+                    }, true);
+                }
+
+                await Tabs.show(groupToShow.tabs, true);
+
+                if (groupToShow.muteTabsWhenGroupCloseAndRestoreWhenOpen) {
+                    await Tabs.setMute(groupToShow.tabs, false);
+                }
+            }
+
+            // link group with window
+            await Cache.setWindowGroup(windowId, groupToShow.id);
+
+            // hide tabs
+            await hideTabs(groupToHide?.tabs);
+
+            const activeTabGroupToHide = groupToHide?.tabs.find(tab => tab.active);
+
+            async function hideTabs(tabs = []) {
+                await Tabs.hide(tabs, true);
+
+                if (groupToHide) {
+                    if (groupToHide.muteTabsWhenGroupCloseAndRestoreWhenOpen) {
+                        await Tabs.setMute(tabs, true);
+                    }
+
+                    if (groupToHide.discardTabsAfterHide) {
+                        if (groupToHide.discardExcludeAudioTabs) {
+                            tabs = tabs.filter(tab => !tab.audible);
+                        }
+
+                        await Tabs.discard(tabs);
+                    }
+                }
+            }
+
+            async function hideUnSyncTabs(tabs) {
+                if (!tabs.length) {
+                    return;
+                }
+
+                await Tabs.hide(tabs, true);
+
+                let showNotif = mainStorage.showTabsInThisWindowWereHidden ?? 0;
+                if (showNotif < 5) {
+                    mainStorage.showTabsInThisWindowWereHidden = ++showNotif;
+                    Notification('tabsInThisWindowWereHidden');
+                }
+            }
+
+            // set active tab
+            if (activeTabId) {
+                await Tabs.setActive(activeTabId);
+
+                if (!groupToHide) {
+                    let tabs = await Tabs.get(windowId);
+
+                    tabs = tabs.filter(tab => !tab.groupId);
+
+                    if (tabs.length === 1 && Utils.isUrlEmpty(tabs[0].url)) {
+                        tabsIdsToRemove.add(tabs[0].id);
+                    } else {
+                        await hideUnSyncTabs(tabs);
+                    }
+                }
+            } else if (groupToHide) {
+                if (activeTabGroupToHide) {
+                    let tabToActive = await Tabs.setActive(null, groupToShow.tabs);
+
+                    if (!tabToActive) {
+                        // group to show has no any tabs, try select pinned tab or create new one
+                        let pinnedTabs = await Tabs.get(windowId, true),
+                            activePinnedTab = await Tabs.setActive(null, pinnedTabs);
+
+                        if (!activePinnedTab) {
+                            await Tabs.create({
+                                active: true,
+                                windowId,
+                                ...getNewTabParams(groupToShow),
+                            }, true);
+                        }
+                    }
+                } else {
+                    // some pinned tab active, do nothing
+                }
+            } else {
+                let tabs = await Tabs.get(windowId, null); // get tabs with pinned
+
+                // remove tabs without group
+                tabs = tabs.filter(tab => !tab.groupId);
+
+                let activePinnedTab = await Tabs.setActive(null, tabs.filter(tab => tab.pinned));
+
+                // find other not pinned tabs
+                tabs = tabs.filter(tab => !tab.pinned);
+
+                if (activePinnedTab) {
+                    await hideUnSyncTabs(tabs);
+                } else {
+                    // no pinned tabs found, some tab without group is active
+
+                    if (groupToShow.tabs.length) {
+                        // set active group tab
+                        await Tabs.setActive(null, groupToShow.tabs);
+
+                        // if has one empty tab - remove it
+                        if (tabs.length === 1 && Utils.isUrlEmpty(tabs[0].url)) {
+                            tabsIdsToRemove.add(tabs[0].id);
+                        } else {
+                            await hideUnSyncTabs(tabs);
+                        }
+                    } else {
+                        if (tabs.length === 1 && Utils.isUrlEmpty(tabs[0].url)) {
+                            await Cache.setTabGroup(tabs[0].id, groupToShow.id)
+                                .catch(log.onCatch(["can't set group", groupToShow.id, tabs[0]], false));
+                            addTabs.push(Cache.applyTabSession(tabs[0]));
+                        } else {
+                            await Tabs.create({
+                                active: true,
+                                windowId,
+                                ...getNewTabParams(groupToShow),
+                            }, true);
+
+                            await hideUnSyncTabs(tabs);
+                        }
+                    }
+                }
+            }
+
+            if (groupToHide) {
+                if (activeTabGroupToHide) {
+                    await hideTabs([activeTabGroupToHide]);
+                }
+
+                groupToHide.tabs.forEach(tab => tab.url.startsWith(Constants.PAGES.MANAGE) && tabsIdsToRemove.add(tab.id));
+            }
+
+            await Tabs.remove(Array.from(tabsIdsToRemove));
+
+            await MenusMain.groupLoaded(groupToShow, windowId);
+
+            if (groupToHide) {
+                await MenusMain.updateGroup(groupToHide);
+            }
+
+            await Browser.actionLoading(false);
+
+            if (!applyFromHistory) {
+                groupsHistory.add(groupId);
+            }
+        }
+
+        sendLoaded(groupId, windowId, addTabs);
+
+        result = true;
+    } catch (e) {
+        result = false;
+
+        if (e) {
+            errorEventHandler.call(log, e);
+
+            await Browser.actionGroup(null, windowId);
+
+            if (!groupWindowId) {
+                Tabs.clearSkipTracking();
+            }
+        }
+    } finally {
+        windowsWithLoadingGroups.delete(windowId);
+    }
+
+    result ? log.stop() : log.stopError();
+
+    return result;
+}
 
 const KEYS_RESPONSIBLE_VIEW = new Set([
     'title',

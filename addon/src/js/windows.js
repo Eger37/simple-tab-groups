@@ -567,7 +567,7 @@ export async function create(groupId, activeTabId) {
     log.log('groupWindowId', groupWindowId);
 
     if (groupWindowId) {
-        await backgroundSelf.applyGroup(groupWindowId, groupId, activeTabId);
+        await Groups.apply(groupWindowId, groupId, activeTabId);
         log.stop('load exist window', groupWindowId);
     } else {
         log.log('creating new window for group', groupId);
@@ -575,7 +575,7 @@ export async function create(groupId, activeTabId) {
         const win = await browser.windows.create();
 
         log.log('applying group to window', win.id);
-        await backgroundSelf.applyGroup(win.id, groupId, activeTabId);
+        await Groups.apply(win.id, groupId, activeTabId);
         log.stop('load new window', win);
     }
 }

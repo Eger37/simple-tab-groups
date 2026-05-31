@@ -11,7 +11,6 @@ import Listeners from '/js/listeners.js\
 ';
 import './prefixed-storage.js';
 import Logger from './logger.js';
-import backgroundSelf from './background.js';
 import Notification from './notification.js';
 import BatchProcessor from './batch-processor.js';
 import * as Broadcast from './broadcast.js';
@@ -272,9 +271,9 @@ async function onUpdated(tabId, changeInfo, tab) {
             Cache.applyTabSession(tab);
 
             if (tab.groupId) {
-                log.log('call applyGroup for tab', tab.id, 'groupId', tab.groupId);
-                await self.applyGroup(tab.windowId, tab.groupId, tab.id) // TODO
-                    .catch(log.onCatch(["can't applyGroup", tab.groupId], false));
+                log.log('call apply group for tab', tab.id, 'groupId', tab.groupId);
+                await Groups.apply(tab.windowId, tab.groupId, tab.id)
+                    .catch(log.onCatch(["can't apply group", tab.groupId], false));
             } else {
                 log.log('call setTabGroup for tab', tab.id);
                 await Cache.setTabGroup(tab.id, null, tab.windowId)
@@ -1088,13 +1087,13 @@ export async function move(tabIds, groupId, params = {}) {
     if (params.showTabAfterMovingItIntoThisGroup) {
         if (params.showOnlyActiveTabAfterMovingItIntoThisGroup) {
             if (activeTabs.length) {
-                log.log('applyGroup', windowId, groupId, firstTab.id)
-                await backgroundSelf.applyGroup(windowId, groupId, firstTab.id);
+                log.log('apply group [1]', windowId, groupId, firstTab.id)
+                await Groups.apply(windowId, groupId, firstTab.id);
                 params.showNotificationAfterMovingTabIntoThisGroup = false;
             }
         } else {
-            log.log('applyGroup 2', windowId, groupId, firstTab.id)
-            await backgroundSelf.applyGroup(windowId, groupId, firstTab.id);
+            log.log('apply group [2]', windowId, groupId, firstTab.id)
+            await Groups.apply(windowId, groupId, firstTab.id);
             params.showNotificationAfterMovingTabIntoThisGroup = false;
         }
     }
@@ -1119,7 +1118,7 @@ export async function move(tabIds, groupId, params = {}) {
 
     Notification(message, {
         iconUrl,
-        module: ['background', 'applyGroup', null, groupId, firstTab.id],
+        module: ['groups', 'apply', null, groupId, firstTab.id],
     });
 
     log.stop('with notify, count:', tabs.length);

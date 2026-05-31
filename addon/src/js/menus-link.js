@@ -201,7 +201,7 @@ export async function openInGroup(groupId, info) {
     const newTab = await Tabs.add(groupId, undefined, info.linkUrl, info.linkText);
 
     if (info.button.RIGHT) {
-        await self.applyGroup(newTab.windowId, groupId, newTab.id);
+        await Groups.apply(newTab.windowId, groupId, newTab.id);
     }
 
     log.stop();
@@ -231,7 +231,7 @@ export async function createNewGroup(info) {
         const newTab = await Tabs.add(group.id, undefined, info.linkUrl, info.linkText);
 
         if (info.button.RIGHT) {
-            await self.applyGroup(undefined, group.id, newTab.id);
+            await Groups.apply(undefined, group.id, newTab.id);
         }
     }
 
