@@ -629,7 +629,7 @@ export default {
             let nodes = [...document.querySelectorAll('#result .group, #result .tab')],
                 focusedNodeIndex = nodes.findIndex(node => node === document.activeElement),
                 activeNodeIndex = nodes.findIndex(node => node.classList.contains('is-active-element')),
-                nextIndex = -1,
+                currentNodeIndex = -1,
                 textPosition = null;
 
             if (event.key === 'ArrowUp') {
@@ -643,18 +643,14 @@ export default {
             }
 
             if (-1 !== focusedNodeIndex) {
-                nextIndex = Utils.getNextIndex(focusedNodeIndex, nodes.length, textPosition);
+                currentNodeIndex = focusedNodeIndex;
             } else if (-1 !== activeNodeIndex) {
-                nextIndex = Utils.getNextIndex(activeNodeIndex, nodes.length, textPosition);
+                currentNodeIndex = activeNodeIndex;
             }
 
-            if (false === nextIndex || -1 === nextIndex) {
-                nextIndex = 'next' === textPosition ? 0 : (nodes.length - 1);
-            }
+            const nextNodeIndex = Utils.getNextIndex(currentNodeIndex, nodes.length, textPosition, true);
 
-            if (nodes[nextIndex]) {
-                nodes[nextIndex].focus();
-            }
+            nodes[nextNodeIndex]?.focus();
         },
 
         selectFirstItemOnSearch() {

@@ -19,92 +19,38 @@ import * as MenusMain from './menus-main.js';
 import * as Tabs from './tabs.js';
 import * as Windows from './windows.js';
 import * as Utils from './utils.js';
+import GroupsHistory from './groups-history.js';
 
 export {on, off} from './broadcast.js?channel=groups';
 
 const logger = new Logger(Constants.MODULES.GROUPS);
-
 const mainStorage = localStorage.create(Constants.MODULES.BACKGROUND);
-
 const windowsWithLoadingGroups = new Set();
+const groupsHistory = new GroupsHistory();
 
-const groupsHistory = (function () {
-    let index = -1,
-        groupIds = [];
-
-    function normalize(groups) {
-        groupIds = groupIds.filter((groupId, groupIndex) => {
-            const found = groups.some(group => group.id === groupId);
-
-            if (!found) {
-                if (groupIndex < index) {
-                    index--;
-                }
-            }
-
-            return found;
-        });
-
-        if (index > groupIds.length - 1) {
-            index = groupIds.length - 1;
-        }
-    }
-
-    return {
-        next(groups) {
-            normalize(groups);
-
-            if (groupIds[index + 1]) {
-                return groupIds[++index];
-            }
-        },
-        prev(groups) {
-            normalize(groups);
-
-            if (groupIds[index - 1]) {
-                return groupIds[--index];
-            }
-        },
-        add(groupId) {
-            const nextIndex = index + 1;
-            groupIds.splice(nextIndex, groupIds.length - index, groupId);
-            index = nextIndex;
-        },
-    };
-})();
-
-export function addToHistory(groupId) {
-    groupsHistory.add(groupId);
+export function fillHistory(windows) {
+    return groupsHistory.fill(windows);
 }
 
-export async function applyByPosition(textPosition, groups, currentGroupId) {
-    if (1 >= groups.length || !currentGroupId) {
+export async function applyByPosition(direction, windowId, groups, currentGroupId) {
+    if (!groups.length) {
         return false;
     }
 
-    let currentGroupIndex = groups.findIndex(group => group.id === currentGroupId);
+    const currentGroupIndex = groups.findIndex(group => group.id === currentGroupId);
+    const nextGroupIndex = Utils.getNextIndex(currentGroupIndex, groups.length, direction, true);
 
-    if (-1 === currentGroupIndex) {
-        currentGroupIndex = 'next' === textPosition ? (groups.length - 1) : 0;
-    }
-
-    let nextGroupIndex = Utils.getNextIndex(currentGroupIndex, groups.length, textPosition);
-
-    return apply(undefined, groups[nextGroupIndex].id);
+    return apply(windowId, groups[nextGroupIndex].id);
 }
 
-export async function applyByHistory(textPosition, groups) {
-    if (1 >= groups.length) {
-        return false;
-    }
-
-    let nextGroupId = 'next' === textPosition ? groupsHistory.next(groups) : groupsHistory.prev(groups);
+export async function applyByHistory(direction, windowId, groups) {
+    const nextGroupId = await groupsHistory.move(windowId, groups, direction);
 
     if (!nextGroupId) {
         return false;
     }
 
-    return apply(undefined, nextGroupId, undefined, true);
+    return apply(windowId, nextGroupId, undefined, true);
 }
 
 export async function apply(windowId, groupId, activeTabId, applyFromHistory = false) {
@@ -313,7 +259,7 @@ export async function apply(windowId, groupId, activeTabId, applyFromHistory = f
             await Browser.actionLoading(false);
 
             if (!applyFromHistory) {
-                groupsHistory.add(groupId);
+                await groupsHistory.add(windowId, groupId);
             }
         }
 

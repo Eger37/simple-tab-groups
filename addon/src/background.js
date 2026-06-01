@@ -556,40 +556,40 @@ async function onBackgroundMessage(message, sender) {
                 result.ok = true;
                 break;
             case 'load-next-group':
-                result.ok = await Groups.applyByPosition('next', notArchivedGroups, currentGroup?.id);
+                result.ok = await Groups.applyByPosition('next', currentWindow.id, notArchivedGroups, currentGroup?.id);
                 break;
             case 'load-prev-group':
-                result.ok = await Groups.applyByPosition('prev', notArchivedGroups, currentGroup?.id);
+                result.ok = await Groups.applyByPosition('prev', currentWindow.id, notArchivedGroups, currentGroup?.id);
                 break;
             case 'load-next-unloaded-group':
                 {
-                    let unloadedGroups = notArchivedGroups.filter(group => !Cache.getWindowId(group.id) || group.id === currentGroup?.id);
-                    result.ok = await Groups.applyByPosition('next', unloadedGroups, currentGroup?.id);
+                    const unloadedGroups = notArchivedGroups.filter(group => !Cache.getWindowId(group.id) || group.id === currentGroup?.id);
+                    result.ok = await Groups.applyByPosition('next', currentWindow.id, unloadedGroups, currentGroup?.id);
                 }
                 break;
             case 'load-prev-unloaded-group':
                 {
-                    let unloadedGroups = notArchivedGroups.filter(group => !Cache.getWindowId(group.id) || group.id === currentGroup?.id);
-                    result.ok = await Groups.applyByPosition('prev', unloadedGroups, currentGroup?.id);
+                    const unloadedGroups = notArchivedGroups.filter(group => !Cache.getWindowId(group.id) || group.id === currentGroup?.id);
+                    result.ok = await Groups.applyByPosition('prev', currentWindow.id, unloadedGroups, currentGroup?.id);
                 }
                 break;
             case 'load-next-non-empty-group':
                 {
-                    const { notArchivedGroups } = await Groups.load(null, true);
-                    result.ok = await Groups.applyByPosition('next', notArchivedGroups.filter(group => group.tabs.length), currentGroup?.id);
+                    const {notArchivedGroups} = await Groups.load(null, true);
+                    result.ok = await Groups.applyByPosition('next', currentWindow.id, notArchivedGroups.filter(group => group.tabs.length), currentGroup?.id);
                 }
                 break;
             case 'load-prev-non-empty-group':
                 {
-                    const { notArchivedGroups } = await Groups.load(null, true);
-                    result.ok = await Groups.applyByPosition('prev', notArchivedGroups.filter(group => group.tabs.length), currentGroup?.id);
+                    const {notArchivedGroups} = await Groups.load(null, true);
+                    result.ok = await Groups.applyByPosition('prev', currentWindow.id, notArchivedGroups.filter(group => group.tabs.length), currentGroup?.id);
                 }
                 break;
             case 'load-history-next-group':
-                result.ok = await Groups.applyByHistory('next', notArchivedGroups);
+                result.ok = await Groups.applyByHistory('next', currentWindow.id, notArchivedGroups);
                 break;
             case 'load-history-prev-group':
-                result.ok = await Groups.applyByHistory('prev', notArchivedGroups);
+                result.ok = await Groups.applyByHistory('prev', currentWindow.id, notArchivedGroups);
                 break;
             case 'load-first-group':
                 if (notArchivedGroups.length) {
@@ -1826,7 +1826,7 @@ async function init() {
 
         await initializeGroupWindows(windows, data.groups.map(g => g.id));
 
-        windows.filter(win => win.groupId).forEach(win => Groups.addToHistory(win.groupId));
+        await Groups.fillHistory(windows);
 
         let tabs = Utils.flatTabs(windows);
 

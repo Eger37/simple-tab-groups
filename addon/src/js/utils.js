@@ -98,7 +98,7 @@ export function format(str, ...args) {
 
 export function isEqualPrimitiveArrays(array1, array2) {
     return array1.length === array2.length
-        && JSON.stringify(array1.slice().sort()) === JSON.stringify(array2.slice().sort());
+        && JSON.stringify(array1.toSorted()) === JSON.stringify(array2.toSorted());
 }
 
 export function isPrimitive(value) {
@@ -334,24 +334,26 @@ export function flatTabs(tabCollections) {
 }
 
 export function getLastActiveTab(tabs) {
-    return tabs.find(tab => tab.active) || tabs.slice().sort(sortBy('lastAccessed')).pop();
+    return tabs.find(tab => tab.active) || tabs.toSorted(sortBy('lastAccessed')).pop();
 }
 
-export function getNextIndex(index, length, textPosition = 'next') {
+export function getNextIndex(index, length, direction = 'next', wrapAround = false) {
     if (!length || length < 0) {
         return false;
     }
 
-    if (1 === length) {
-        return 0;
-    }
+    const lastIndex = length - 1;
 
-    if ('next' === textPosition) {
-        return (index + 1) % length;
-    } else if ('prev' === textPosition) {
-        return 0 === index ? length - 1 : index - 1;
+    if ('next' === direction) {
+        return wrapAround
+            ? (index < 0 || index >= lastIndex ? 0 : index + 1)
+            : clamp(index + 1, 0, lastIndex);
+    } else if ('prev' === direction) {
+        return wrapAround
+            ? (index <= 0 || index > lastIndex ? lastIndex : index - 1)
+            : clamp(index - 1, 0, lastIndex);
     } else {
-        throw new Error(`invalid textPosition: ${textPosition}`);
+        throw new Error(`invalid direction: ${direction}`);
     }
 }
 
@@ -423,7 +425,7 @@ export function getRandomInt(min = 1, max = Number.MAX_SAFE_INTEGER, step = 1) {
 }
 
 export function clamp(value, min = 0, max = 999) {
-    if (min >= max) {
+    if (min > max) {
         throw new Error('invalid clamp args');
     }
 
