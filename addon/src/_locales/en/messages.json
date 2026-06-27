@@ -759,6 +759,14 @@
         "message": "Discard tab",
         "description": "Discard tab"
     },
+    "pinTabInGroupTitle": {
+        "message": "Pin to group",
+        "description": "Pin this tab within its group (pinned only while the group is active)"
+    },
+    "unpinTabInGroupTitle": {
+        "message": "Unpin from group",
+        "description": "Remove the group-scoped pin from this tab"
+    },
     "folderNameTitle": {
         "message": "Folder name",
         "description": "Folder name title"
@@ -1393,9 +1401,33 @@
         "message": "The data in the cloud can be very different from the current state.",
         "description": "The data in the cloud can be very different from the current state."
     },
+    "resetSyncStateButton": {
+        "message": "Reset sync state",
+        "description": "Reset this device's local sync state (recovery action)"
+    },
+    "resetSyncStateConfirm": {
+        "message": "This clears the local synchronization state for this device only (baseline and change log). The data in the cloud is NOT touched. The next synchronization will behave like a first sync: nothing is removed and your current tabs are re-uploaded.",
+        "description": "Confirmation text for the reset sync state action"
+    },
     "syncEnableTitle": {
         "message": "Enable auto backup to the cloud",
         "description": "Enable auto backup to the cloud"
+    },
+    "syncBackupBeforeApply": {
+        "message": "Create a backup before applying sync changes (recommended)",
+        "description": "Toggle: take a local STG backup before delta-sync applies any change, so a bad sync can be rolled back"
+    },
+    "syncSleepNewTabs": {
+        "message": "Create new synced tabs asleep (recommended)",
+        "description": "Toggle: tabs created by sync show title+favicon and only load when activated"
+    },
+    "syncSleepPinnedTabs": {
+        "message": "Sleep synced pinned tabs (Firefox loads pinned tabs by default)",
+        "description": "Toggle: also create synced pinned tabs asleep via create-then-discard; off by default since pinned tabs normally load"
+    },
+    "syncActivatePreviouslyActiveTabs": {
+        "message": "Activate tabs that were active on the other machine",
+        "description": "Sub-toggle: load a synced tab if it was active (loaded) on the source machine"
     },
     "syncSettingsLocation": {
         "message": "Sync settings location",

@@ -9,6 +9,7 @@ import * as Groups from '/js/groups.js';
 import * as Utils from '/js/utils.js';
 import * as Windows from '/js/windows.js';
 import * as Cloud from '/js/sync/cloud/cloud.js';
+import {isPinnedNeedingGroupPin} from '/js/tab-move-split.js';
 
 const mainStorage = localStorage.create(Constants.MODULES.BACKGROUND);
 const isManage = location.href.startsWith(Constants.PAGES.MANAGE);
@@ -23,7 +24,7 @@ export default {
 
             DEFAULT_COOKIE_STORE_ID: Constants.DEFAULT_COOKIE_STORE_ID,
 
-            defaultAvailableTabKeys: ['id', 'url', 'title', 'favIconUrl', 'status', 'index', 'discarded', 'active', 'cookieStoreId', 'windowId'],
+            defaultAvailableTabKeys: ['id', 'url', 'title', 'favIconUrl', 'status', 'index', 'discarded', 'active', 'cookieStoreId', 'windowId', 'pinned', 'groupPinned'],
 
             currentWindow: null,
             openedWindows: [],
@@ -116,71 +117,89 @@ export default {
         getGroupTitle: Groups.getTitle,
         groupTabsCountMessage: Groups.tabsCountMessage,
 
+        // Fault isolation for broadcast handlers: the dispatch loop (broadcast.js) wraps each
+        // handler in a synchronous try/catch, so a sync throw is contained. But several handlers
+        // below are async (or call an async method without awaiting), and their rejected promise
+        // escapes that try/catch as an unhandled rejection. This helper runs the body
+        // synchronously (broadcast ordering unchanged) and only catches the returned promise's
+        // rejection, logging it locally via STG's logger instead of letting it escape.
+        safeHandler(name, fn) {
+            return (...args) => Promise.resolve(fn.apply(this, args)).catch(self.logger?.onCatch(name, false));
+        },
+
         tabGroupsSetupListeners() {
             const list = this.tabGroupsOffListeners = new Set();
 
-            list.add(Containers.onChanged(() => this.onChangedContainers()));
+            list.add(Containers.onChanged(this.safeHandler('onChangedContainers', () => this.onChangedContainers())));
 
-            list.add(Windows.on(['opened', 'closed'], () => this.loadWindows()));
+            list.add(Windows.on(['opened', 'closed'], this.safeHandler('loadWindows', () => this.loadWindows())));
 
-            list.add(Tabs.on('updated', ({tabId, changeInfo}) => {
+            list.add(Tabs.on('updated', this.safeHandler('Tabs.updated', ({tabId, changeInfo}) => {
                 const tab = this.allTabs[tabId] ?? this.unSyncTabs.find(tab => tab.id === tabId);
                 tab && Object.assign(tab, changeInfo);
-            }));
-            list.add(Tabs.on('updated.group', ({groupId}) => {
+            })));
+            list.add(Tabs.on('updated.group', this.safeHandler('Tabs.updated.group', ({groupId}) => {
                 this.loadGroupTabs(groupId);
-            }));
-            list.add(Tabs.on('updated.unsync', ({windowId}) => {
+            })));
+            list.add(Tabs.on('updated.unsync', this.safeHandler('Tabs.updated.unsync', ({windowId}) => {
                 this.loadUnsyncedTabs({windowId});
-            }));
-            list.add(Tabs.on('removed', ({tabId, groupId}) => {
+            })));
+            list.add(Tabs.on('removed', this.safeHandler('Tabs.removed', ({tabId, groupId}) => {
                 const group = this.groups.find(group => group.id === groupId);
+
+                // Same cross-channel race as loadGroupTabs: the Tabs `removed` broadcast can
+                // reference a synced group the local `this.groups` array doesn't hold yet
+                // (its Groups `added` broadcast is still pending). Nothing to splice — skip.
+                if (!group) {
+                    return;
+                }
+
                 const tabIndex = group.tabs.findIndex(tab => tab.id === tabId);
 
                 if (tabIndex !== -1) {
                     group.tabs.splice(tabIndex, 1);
                 }
-            }));
-            list.add(Tabs.on('removed.unsync', ({tabId}) => {
+            })));
+            list.add(Tabs.on('removed.unsync', this.safeHandler('Tabs.removed.unsync', ({tabId}) => {
                 const tabIndex = this.unSyncTabs.findIndex(tab => tab.id === tabId);
 
                 if (tabIndex !== -1) {
                     this.unSyncTabs.splice(tabIndex, 1);
                 }
-            }));
+            })));
 
-            list.add(Groups.on('added', request => {
+            list.add(Groups.on('added', this.safeHandler('Groups.added', request => {
                 this.groups.push(this.mapGroup(request.group));
                 this.onGroupAdded?.(request);
-            }));
-            list.add(Groups.on('updated', request => {
+            })));
+            list.add(Groups.on('updated', this.safeHandler('Groups.updated', request => {
                 const group = this.groups.find(group => group.id === request.group.id);
                 Object.assign(group, request.group);
                 this.onGroupUpdated?.(request);
-            }));
-            list.add(Groups.on('removed', request => {
+            })));
+            list.add(Groups.on('removed', this.safeHandler('Groups.removed', request => {
                 this.groups = this.groups.filter(group => group.id !== request.groupId);
                 this.onGroupRemoved?.(request);
-            }));
-            list.add(Groups.on('loaded', async request => {
+            })));
+            list.add(Groups.on('loaded', this.safeHandler('Groups.loaded', async request => {
                 await this.loadWindowsAndGroups();
                 await this.onGroupLoadedReady?.(request);
-            }));
-            list.add(Groups.on('unloaded', async request => {
+            })));
+            list.add(Groups.on('unloaded', this.safeHandler('Groups.unloaded', async request => {
                 await this.tabGroupsLoad();
                 this.onGroupUnloaded?.(request);
-            }));
-            list.add(Groups.on('updated.all', async request => {
+            })));
+            list.add(Groups.on('updated.all', this.safeHandler('Groups.updated.all', async request => {
                 await this.tabGroupsLoad();
                 this.onGroupsUpdatedAll?.(request);
-            }));
+            })));
 
-            list.add(Cloud.on('sync-end', async request => {
-                if (request.changes.local) {
+            list.add(Cloud.on('sync-end', this.safeHandler('Cloud.sync-end', async request => {
+                if (request.changes?.local) {
                     await this.tabGroupsLoad();
                     this.onGroupsSyncEnd?.(request);
                 }
-            }));
+            })));
         },
 
         tabGroupsRemoveListeners() {
@@ -338,6 +357,10 @@ export default {
         discardTab(tab) {
             this.sendMessageModule('Tabs.discard', this.getTabIdsForMove(tab.id));
         },
+        toggleTabGroupPinned(tab, groupPinned) {
+            // group-scoped pin: pinned only while the tab's group is active.
+            this.sendMessageModule('Groups.setTabGroupPinned', tab.id, groupPinned);
+        },
         discardGroup(group) {
             this.sendMessageModule('Tabs.discard', group.tabs.map(Tabs.extractId));
         },
@@ -361,10 +384,22 @@ export default {
         async moveTabs(tabId, groupId, loadUnsync = false, showTabAfterMovingItIntoThisGroup, discardTabs) {
             const tabIds = this.getTabIdsForMove(tabId);
 
-            await this.sendMessageModule('Tabs.move', tabIds, groupId, {showTabAfterMovingItIntoThisGroup});
+            // Single source of truth: Tabs.move now routes any browser-pinned tab into the
+            // group as group-pinned (unpin → move → flag) instead of dropping it + showing
+            // "pinnedTabsAreNotSupported". So just hand it everything.
+            if (tabIds.length) {
+                await this.sendMessageModule('Tabs.move', tabIds, groupId, {showTabAfterMovingItIntoThisGroup});
+            }
 
+            // Discard only the tabs that stayed normal — a tab that became (or stays)
+            // group-pinned is pinned and visible, so discarding it would be wrong.
             if (discardTabs) {
-                this.sendMessageModule('Tabs.discard', tabIds);
+                const findTab = id => this.allTabs[id] ?? this.unSyncTabs.find(tab => tab.id === id);
+                const normalTabIds = tabIds.filter(id => !isPinnedNeedingGroupPin(findTab(id)));
+
+                if (normalTabIds.length) {
+                    this.sendMessageModule('Tabs.discard', normalTabIds);
+                }
             }
 
             if (loadUnsync) {
@@ -375,6 +410,14 @@ export default {
         async loadGroupTabs(groupId) {
             const {group: {tabs}} = await this.sendMessageModule('Groups.load', groupId, true, true, this.includeTabThumbnails);
             const group = this.groups.find(gr => gr.id === groupId);
+
+            // The Tabs `updated.group` broadcast (tabs channel) can arrive before the
+            // Groups `added` broadcast (groups channel) for a freshly-synced group, so the
+            // local `this.groups` array may not contain it yet. The view is just stale for
+            // that group — bail out; the pending `added`/`sync-end` repaint will load it.
+            if (!group) {
+                return;
+            }
 
             group.tabs = tabs.map(tab => this.mapTab(tab, group.isArchive));
         },

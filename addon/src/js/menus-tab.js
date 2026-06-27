@@ -1,9 +1,11 @@
 
 import Listeners from '/js/listeners.js\
 ?storage.local.onChanged\
-&windows.onFocusChanged';
+&windows.onFocusChanged\
+&menus.onShown';
 import * as Constants from '/js/constants.js';
 import * as Menus from '/js/menus.js';
+import * as Cache from '/js/cache.js';
 import * as Containers from '/js/containers.js';
 import * as Utils from '/js/utils.js';
 import * as Tabs from '/js/tabs.js';
@@ -18,6 +20,7 @@ const CONTEXT = Menus.ContextType.TAB;
 const PARENT_ID = CONTEXT;
 const SETTING_KEYS = ['showContextMenuOnTabs', 'showArchivedGroups'];
 const SET_ICON_TO_GROUP_ID = 'set-tab-icon-as-group-icon';
+const TOGGLE_GROUP_PIN_ID = 'toggle-tab-group-pin';
 
 const MODULE_NAME = 'menus-tab';
 
@@ -62,6 +65,19 @@ async function createMenus(settings = null) {
         id: PARENT_ID,
         title: Lang('moveTabToGroupTitle'),
         context: CONTEXT,
+    });
+
+    // Group-scoped pin toggle for the clicked tab. First among STG's items so it sits at
+    // the TOP of STG's section in the native tab menu (extensions can't go above Firefox's
+    // own entries; first-among-STG-items is the achievable "top"). Hidden by default;
+    // menus.onShown reveals it (and sets the right label) only when the clicked tab is in a group.
+    await Menus.create({
+        id: TOGGLE_GROUP_PIN_ID,
+        parentId: PARENT_ID,
+        title: Lang('pinTabInGroupTitle'),
+        icon: 'icons/thumbtack.svg',
+        visible: false,
+        module: [MODULE_NAME, 'toggleGroupPin'],
     });
 
     for (const group of groups) {
@@ -112,6 +128,17 @@ export async function updateGroup(group, settings = null) {
     }
 
     const groupProperties = await Groups.getMenuProperties(group, CONTEXT, settings);
+
+    // Defensive: a per-group menu item can be absent (e.g. a group created on this device
+    // by a delta sync, which persists via Groups.save and bypasses the groupAdded menu
+    // path). Updating a missing item throws in Menus.update and would abort the caller
+    // (notably Groups.apply, dropping the rest of the apply). Skip-and-log instead; the
+    // post-sync menus rebuild recreates the item.
+    if (!(await Menus.has(groupProperties.id))) {
+        logger.log('updateGroup: menu item missing, skipping', groupProperties.id);
+        return;
+    }
+
     await Menus.update(groupProperties.id, groupProperties);
 }
 
@@ -154,6 +181,13 @@ export async function groupRemoved(group) {
     }
 
     const groupMenuId = await Groups.getMenuId(group.id, CONTEXT);
+    // Defensive: a per-group menu item can be absent (e.g. a group created on this device by
+    // a delta sync via Groups.save, which bypasses the groupAdded menu path). Removing a
+    // missing item throws in Menus.remove and would abort the caller. Skip-and-return,
+    // mirroring the updateGroup Menus.has() guard above.
+    if (!(await Menus.has(groupMenuId))) {
+        return;
+    }
     await Menus.remove(groupMenuId);
 }
 
@@ -166,11 +200,46 @@ export async function groupsUpdated(groups) {
 export function addListeners() {
     Listeners.storage.local.onChanged.add(onStorageChanged, {waitListener: false});
     Listeners.windows.onFocusChanged.add(onWindowFocusChanged, {waitListener: false});
+    Listeners.menus.onShown.add(onMenusShown, {waitListener: false});
 }
 
 export function removeListeners() {
     Listeners.storage.local.onChanged.remove(onStorageChanged);
     Listeners.windows.onFocusChanged.remove(onWindowFocusChanged);
+    Listeners.menus.onShown.remove(onMenusShown);
+}
+
+// Reveal/label the group-pin item for the clicked tab. The native menus API can't read
+// the clicked tab before the menu shows, so we resolve it here and refresh() the live
+// menu. Only shown for a tab that is in a group; the label reflects current groupPinned.
+async function onMenusShown(info, tab) {
+    if (!info.contexts.includes(CONTEXT)) {
+        return;
+    }
+
+    const settings = await loadSettings();
+
+    if (!settings.showContextMenuOnTabs) {
+        return;
+    }
+
+    if (!(await Menus.has(TOGGLE_GROUP_PIN_ID))) {
+        return;
+    }
+
+    const groupId = tab && Cache.getTabGroup(tab.id);
+
+    if (groupId) {
+        const groupPinned = Cache.getTabGroupPinned(tab.id);
+        await Menus.update(TOGGLE_GROUP_PIN_ID, {
+            visible: true,
+            title: Lang(groupPinned ? 'unpinTabInGroupTitle' : 'pinTabInGroupTitle'),
+        });
+    } else {
+        await Menus.update(TOGGLE_GROUP_PIN_ID, {visible: false});
+    }
+
+    await browser.menus.refresh();
 }
 
 async function onStorageChanged(changes) {
@@ -275,6 +344,23 @@ export async function moveToGroup(groupId, info, tab) {
     if (!info.button.RIGHT && Menus.isControlPressed(info)) {
         await Tabs.discard(tabIds);
     }
+
+    log.stop();
+}
+
+export async function toggleGroupPin(info, tab) {
+    const log = logger.start(toggleGroupPin, info, tab);
+
+    // Safe no-op for a tab without a group (e.g. a stale/always-rendered click): the menu
+    // is normally hidden for group-less tabs via onMenusShown, but guard anyway.
+    const groupId = Cache.getTabGroup(tab.id);
+
+    if (!groupId) {
+        log.stopWarn('clicked tab has no group, ignoring', tab.id);
+        return;
+    }
+
+    await Groups.setTabGroupPinned(tab.id, !Cache.getTabGroupPinned(tab.id));
 
     log.stop();
 }

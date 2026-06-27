@@ -25,6 +25,7 @@ import * as Windows from './windows.js';
 import * as ConstantsBrowser from './constants-browser.js';
 import * as Storage from './storage.js';
 import * as BrowserSettings from './browser-settings.js';
+import * as DeltaCapture from './sync/delta/delta-capture.js';
 
 export {on, off} from './broadcast.js?channel=tabs';
 
@@ -71,6 +72,22 @@ export function sendUpdatedGroup(groupId) {
     send('updated.group', {
         groupId,
     });
+}
+
+// A4: a synchronous snapshot of the cache fields a fire-and-forget content capture
+// (tabModified/pinnedModified) needs. The capture fn awaits resolveUid/getGroupRelativeIndex
+// before reading these; by then the tab may have been removed and its cache entry torn down,
+// yielding a garbled/empty record. Reading them here — at the call site, in the same sync
+// tick as the originating event — pins consistent values the capture uses instead of re-reading.
+// uid may still be absent (lazy mint); capture falls back to resolveUid in that case.
+function captureSnapshot(tabId) {
+    return {
+        groupId: Cache.getTabGroup(tabId),
+        uid: Cache.getTabUid(tabId),
+        lastModified: Cache.getTabLastModified(tabId),
+        groupPinned: Cache.getTabGroupPinned(tabId),
+        favIconUrl: Cache.getTabFavIcon(tabId),
+    };
 }
 
 // listeners
@@ -155,6 +172,7 @@ async function onCreated(tab) {
     Cache.setTab(tab);
 
     if (isPinned(tab)) {
+        DeltaCapture.pinnedAdded(tab); // P1 delta log: a tab created already pinned (global pinned set)
         return;
     }
 
@@ -163,7 +181,19 @@ async function onCreated(tab) {
 
     Cache.applyTabSession(tab);
 
+    // A1: mint the uid EAGERLY for a grouped tab. uid is otherwise minted lazily by the first
+    // capture; a tab created+closed before any capture ran has no uid, and onRemoved reads it
+    // SYNCHRONOUSLY (cache already torn down by send time) → tabRemoved early-returns on !uid →
+    // the tab resurrects on peers. Minting here guarantees any syncable tab has a uid before it
+    // can be removed. Cheap (one session write) and only for tabs that actually got a group.
+    if (Cache.getTabGroup(tab.id) && !Cache.getTabUid(tab.id)) {
+        await Cache.setTabUid(tab.id)
+            .catch(logger.onCatch("onCreated can't mint uid", false));
+    }
+
     updatedBatch.add(tab.id, tab.groupId || `unsync:${tab.windowId}`);
+
+    DeltaCapture.tabAdded(tab); // P1 delta log (inert); skip checks above exclude sync-created tabs
 }
 
 async function onActivated({tabId, windowId, previousTabId = null}) {
@@ -240,7 +270,49 @@ async function onUpdated(tabId, changeInfo, tab) {
         return;
     }
 
+    // Sync-applied navigation echo guard: when this content change (url/title) is observed
+    // WHILE a sync apply runs, or within the brief causal window after one ended, it is the
+    // settle/redirect of a url the transport just navigated this tab to (browser.tabs.update
+    // resolves before its onUpdated fires, AFTER endApply). Mark the tab — recording the FIRST
+    // observed url (the applied url) — so the capture layer drops the echo of EXACTLY that url
+    // instead of re-capturing it and pushing it back (perpetual churn). A server REDIRECT to a
+    // DIFFERENT url is intentionally NOT suppressed (it is genuinely new info the cloud needs to
+    // converge to). A user navigation made outside the window is never marked → still syncs.
+    if ((Object.hasOwn(changeInfo, 'title') || Object.hasOwn(changeInfo, 'url'))
+        && DeltaCapture.shouldArmAppliedNavigation()) {
+        DeltaCapture.markAppliedNavigation(tab.id, tab.url);
+    }
+
     if (isPinned(tab) && !Object.hasOwn(changeInfo, 'pinned')) {
+        // a global pinned tab changed content (url/title): persist favicon (for local display
+        // + so the NEXT pinned.modify carries the current favicon) + lastModified, and record
+        // a pinned.modify so the change syncs (mirrors the grouped path below). A favicon-ONLY
+        // change generates NO delta: a favicon never needs its own event — it rides along
+        // inside the record written for a real change (title/url here, or the next compaction
+        // snapshot, both reading the CURRENT favicon). This is what makes the 347k-duplication
+        // structurally impossible: a favicon only ever appears as one field of the latest record.
+        if (Object.hasOwn(changeInfo, 'favIconUrl')) {
+            await Cache.setTabFavIcon(tab.id, changeInfo.favIconUrl)
+                .catch(log.onCatch(['cant set favIcon (pinned)', tab, changeInfo], false));
+        }
+
+        if (Object.hasOwn(changeInfo, 'title') || Object.hasOwn(changeInfo, 'url')) {
+            await Cache.setTabLastModified(tab.id, Cache.getTabLastModified(tab.id))
+                .catch(log.onCatch(['cant set lastModified (pinned)', tab, changeInfo], false));
+
+            // A3: an ACTIVE group-pinned tab is genuinely browser-pinned, so it reaches this
+            // `isPinned(tab)` branch — but it still has a groupId and must stay in its group,
+            // never leak into the GLOBAL pinned set. Route its content change through the
+            // grouped tab.modify (which carries groupId + the group-pinned flag) instead of
+            // pinned.modify. Mirrors the pin-transition guard at the hidden/pinned block below.
+            if (Cache.getTabGroupPinned(tab.id) && Cache.getTabGroup(tab.id)) {
+                DeltaCapture.tabModified(tab, captureSnapshot(tab.id)); // P1 delta log: content change for an active group-pinned tab (stays grouped)
+            } else {
+                // A4: snapshot cache fields synchronously before the fire-and-forget capture awaits.
+                DeltaCapture.pinnedModified(tab, captureSnapshot(tab.id)); // P1 delta log: url/title content change for a global pinned tab (carries current favicon)
+            }
+        }
+
         log.stop('🛑 tab is pinned');
         return;
     }
@@ -250,16 +322,68 @@ async function onUpdated(tabId, changeInfo, tab) {
             .catch(log.onCatch(['cant set favIcon', tab, changeInfo], false));
     }
 
+    // a title/url change means content changed: persist the bumped lastModified durably and
+    // record a tab.modify so the change syncs. A favicon-ONLY change generates NO delta: a
+    // favicon needs no event of its own — it rides along inside a record written for a real
+    // change (this tab.modify, which reads the CURRENT favicon, or the next compaction
+    // snapshot). Dynamic-favicon apps (Gmail/Clockify) also change their TITLE, so the
+    // title-change tab.modify already carries the fresh favicon for free. Emitting a
+    // favicon-only event is what grew syncDeltaLog to GBs (347k duplicated copies).
+    // A6: trigger on url change too, not just title. STATUS already fires onUpdated on a
+    // navigation, but getRealTabStateChanged only surfaces `url` now that it is in
+    // ON_UPDATED_TAB_PROPERTIES — so a grouped tab navigating to a new url WITHOUT a title
+    // change now syncs (mirrors the pinned branch above). Still no favicon-only delta: a
+    // favicon-only change populates neither `title` nor `url`. isApplying() in DeltaCapture
+    // keeps sync-created tabs' first navigation from feeding back into the log.
+    if (Object.hasOwn(changeInfo, 'title') || Object.hasOwn(changeInfo, 'url')) {
+        await Cache.setTabLastModified(tab.id, Cache.getTabLastModified(tab.id))
+            .catch(log.onCatch(['cant set lastModified', tab, changeInfo], false));
+
+        // A4: snapshot the cache fields the capture reads SYNCHRONOUSLY here, before the
+        // fire-and-forget capture awaits resolveUid/getGroupRelativeIndex (during which the
+        // tab may be removed and its cache entry torn down → garbled/empty record).
+        DeltaCapture.tabModified(tab, captureSnapshot(tab.id)); // P1 delta log: url/title content change for grouped tabs (carries current favicon)
+    }
+
     if (Object.hasOwn(changeInfo, 'pinned') || Object.hasOwn(changeInfo, 'hidden')) {
+        // group-scoped pinned tab: a pin transition here is STG pinning it WITHIN its
+        // group (pinned only while the group is active), NOT the user globally-pinning
+        // it. It must keep its groupId, never enter the global pinned set. Normally the
+        // skipTracking flag around Groups.pinGroupTabs prevents this handler from firing;
+        // this is a defensive guard against a leaked event so the tab is never lost.
+        if (Object.hasOwn(changeInfo, 'pinned') && Cache.getTabGroupPinned(tab.id) && Cache.getTabGroup(tab.id)) {
+            log.stop('🛑 group-pinned tab pin transition, keeping group', tab.id);
+            return;
+        }
+
         let tabGroupId;
 
         if (changeInfo.pinned || changeInfo.hidden) {
             changeInfo.pinned && log.log('remove group for pinned tab', tab.id);
             changeInfo.hidden && log.log('remove group for hidden tab', tab.id);
             tabGroupId = Cache.getTabGroup(tab.id);
+
+            // pin transition: the tab leaves its group and joins the global pinned set.
+            // read uid before dropping the cache group, emit a tab.remove for the group
+            // it left, then a pinned.add for its new pinned identity.
+            if (changeInfo.pinned) {
+                const uid = Cache.getTabUid(tab.id);
+                if (uid && tabGroupId) {
+                    DeltaCapture.tabRemoved(uid, tabGroupId); // P1 delta log: left its group on pin
+                }
+                DeltaCapture.pinnedAdded(tab); // P1 delta log: joined the global pinned set
+            }
+
             await Cache.removeTabGroup(tab.id).catch(() => {});
         } else if (changeInfo.pinned === false) {
             log.log('tab is unpinned', tab.id);
+
+            // unpin transition: the tab leaves the global pinned set (it will be
+            // re-tracked into a group below / on next load).
+            const uid = Cache.getTabUid(tab.id);
+            if (uid) {
+                DeltaCapture.pinnedRemoved(uid); // P1 delta log: left the global pinned set
+            }
 
             await Cache.setTabGroup(tab.id, null, tab.windowId)
                 .catch(log.onCatch(["can't set group to tab, !pinned", tab.id], false));
@@ -307,7 +431,12 @@ function onRemoved(tabId, {isWindowClosing, windowId}) {
 
     skip.removed.add(tabId); // BUG https://bugzilla.mozilla.org/show_bug.cgi?id=1396758
 
+    // drop any pending sync-applied-navigation echo mark so it can't leak onto a reused tab id.
+    DeltaCapture.clearAppliedNavigation(tabId);
+
     const groupId = Cache.getTabGroup(tabId);
+    const uid = Cache.getTabUid(tabId); // read before cache entry is dropped (for P1 delta log)
+    const wasPinned = Cache.lastTabsState[tabId]?.pinned === true; // read before removeTab clears it
 
     updatedBatch.delete(tabId, groupId || `unsync:${windowId}`);
 
@@ -336,7 +465,11 @@ function onRemoved(tabId, {isWindowClosing, windowId}) {
                 tabId,
                 groupId,
             });
+            DeltaCapture.tabRemoved(uid, groupId); // P1 delta log (inert): true user removal of a tracked tab
         } else {
+            if (wasPinned && uid) {
+                DeltaCapture.pinnedRemoved(uid); // P1 delta log: true user removal of a global pinned tab
+            }
             send('removed.unsync', {
                 tabId,
             });
@@ -344,8 +477,13 @@ function onRemoved(tabId, {isWindowClosing, windowId}) {
     }
 }
 
-async function onMoved(tabId, {windowId, /* fromIndex, toIndex */}) {
-    // await Utils.wait(); // ? no needs for wait skipTrackingWindows list
+async function onMoved(tabId, {windowId, /* fromIndex, */ toIndex}) {
+    // A2: settle before capture reads. Mirrors onCreated/onUpdated. The move event fires the
+    // instant the browser starts the move; without this wait the cache groupId and the live
+    // browser index getGroupRelativeIndex reads can still reflect the PRE-move state →
+    // wrong group-relative index (peer tab order breaks) or a dropped move. Also lets the
+    // skip.removed/tracking + skipTrackingWindows lists populate (onCreated runs after 50ms).
+    await Utils.wait(50 + 20);
 
     if (skip.removed.has(tabId)) {
         logger.log(onMoved, '🛑 skip removed tab:', tabId);
@@ -368,6 +506,13 @@ async function onMoved(tabId, {windowId, /* fromIndex, toIndex */}) {
 
     updatedBatch.add(tabId, groupId || `unsync:${windowId}`);
 
+    if (groupId) {
+        DeltaCapture.tabMoved(tabId, toIndex); // P1 delta log: intra-group reorder of a tracked tab
+    } else if (Cache.lastTabsState[tabId]?.pinned) {
+        // no group + pinned: a reorder among the global pinned tabs.
+        DeltaCapture.pinnedMoved(tabId, toIndex); // P1 delta log: reorder among global pinned tabs
+    }
+
     /*
     if (Cache.getTabGroup(tabId)) {
         clearTimeout(openerTabTimer);
@@ -376,7 +521,10 @@ async function onMoved(tabId, {windowId, /* fromIndex, toIndex */}) {
 }
 
 async function onDetached(tabId, {oldWindowId}) { // notice: called before onAttached
-    // await Utils.wait(); // ? no needs for wait skipTrackingWindows list
+    // A2: settle before reading cache state. Mirrors onMoved/onAttached so the
+    // skip.removed/tracking + skipTrackingWindows lists are populated and the detach has
+    // committed before this handler routes the tab.
+    await Utils.wait(50 + 20);
 
     if (skip.removed.has(tabId)) {
         logger.log(onDetached, '🛑 skip removed tab:', tabId);
@@ -401,7 +549,11 @@ async function onDetached(tabId, {oldWindowId}) { // notice: called before onAtt
 }
 
 async function onAttached(tabId, {newWindowId}) { // called when tabs.move()
-    // await Utils.wait(); // ? no needs for wait skipTrackingWindows list
+    // A2: settle before capture reads. The attach event fires as the browser begins placing
+    // the tab in the new window; without this wait setTabGroup below and the group-relative
+    // index read can reflect the pre-attach state. Also lets the skip + skipTrackingWindows
+    // lists populate. Mirrors onCreated/onUpdated.
+    await Utils.wait(50 + 20);
 
     if (skip.removed.has(tabId)) {
         logger.log(onAttached, '🛑 skip removed tab:', tabId);
@@ -427,6 +579,14 @@ async function onAttached(tabId, {newWindowId}) { // called when tabs.move()
 
     log.log('groupId', groupId);
 
+    // A1: mint the uid EAGERLY for a tab attached into a group (e.g. dragged between windows),
+    // so onRemoved always finds a uid and the tab's removal delta is recorded. Same rationale
+    // as onCreated. Cheap and only for tabs that ended up grouped.
+    if (groupId && !Cache.getTabUid(tabId)) {
+        await Cache.setTabUid(tabId)
+            .catch(log.onCatch("can't mint uid", false));
+    }
+
     updatedBatch.add(tabId, groupId || `unsync:${newWindowId}`);
 
     log.stop();
@@ -442,7 +602,7 @@ function onStorageChanged(changes) {
 }
 
 // methods
-export async function create({url, active, pinned, title, index, windowId, openerTabId, cookieStoreId, newTabContainer, ifDifferentContainerReOpen, excludeContainersForReOpen, groupId, favIconUrl, thumbnail}, skipListener = false) {
+export async function create({url, active, pinned, discarded, title, index, windowId, openerTabId, cookieStoreId, newTabContainer, ifDifferentContainerReOpen, excludeContainersForReOpen, groupId, favIconUrl, thumbnail, groupPinned}, skipListener = false) {
     if (!Constants.IS_BACKGROUND_PAGE) {
         throw new Error('is not background');
     }
@@ -484,7 +644,29 @@ export async function create({url, active, pinned, title, index, windowId, opene
         tab.pinned = true;
     }
 
-    if (!tab.active && !tab.pinned && tab.url && !tab.url.startsWith('about:') && !longUrl) {
+    // A tab is created lazily (discarded) so it shows title+favicon but does not load
+    // until clicked. STG does this for inactive-group tabs by default; callers (e.g. sync
+    // apply) can also pass `discarded` EXPLICITLY to override that default in either
+    // direction: `true` forces it for a tab Firefox would otherwise load, while
+    // `false` forces a normally-defaulted-discarded group tab to load (sync's
+    // "activate this tab" path). When `discarded` is left undefined the legacy default
+    // applies: non-pinned tabs sleep, pinned tabs load. The active/foreground tab never
+    // sleeps. A discarded tab needs a real, restorable URL and a title, so the
+    // about:/longUrl/no-url cases are still excluded below.
+    const defaultDiscarded = !tab.pinned;
+    const wantDiscarded = (typeof discarded === 'boolean' ? discarded : defaultDiscarded) && !tab.active
+        && !!tab.url && !tab.url.startsWith('about:') && !longUrl;
+
+    // PINNED tabs cannot be created discarded: Firefox's tabs.create rejects the call with
+    // "Pinned tabs cannot be created and discarded." (and, because a title is only allowed
+    // on a discarded tab, the title would compound the rejection). See
+    // https://searchfox.org/mozilla-central/source/browser/components/extensions/parent/ext-tabs.js
+    // So for a pinned tab we must create it LOADED (no discarded/title in the create
+    // payload) and, if sleep was requested, discard it AFTER creation (see below). For
+    // non-pinned tabs the in-payload `discarded` is used as before.
+    const discardPinnedAfterCreate = wantDiscarded && tab.pinned;
+
+    if (wantDiscarded && !tab.pinned) {
         tab.discarded = true;
     }
 
@@ -522,6 +704,15 @@ export async function create({url, active, pinned, title, index, windowId, opene
         skip.created.add(newTab.id);
     }
 
+    // PINNED + sleep-requested: Firefox won't create a pinned tab discarded, so we created
+    // it loaded above and discard it now. browser.tabs.discard on a freshly-created pinned
+    // tab is allowed and yields the desired "pinned, asleep, shows title+favicon" state.
+    if (discardPinnedAfterCreate) {
+        await browser.tabs.discard(newTab.id)
+            .then(() => { newTab.discarded = true; })
+            .catch(error => logger.logError(['cant discard pinned tab after create', newTab.id], error));
+    }
+
     delete newTab.groupId; // TODO temp
 
     if (longUrl) {
@@ -529,7 +720,7 @@ export async function create({url, active, pinned, title, index, windowId, opene
         self.setTimeout(() => delete longUrls[newTab.id], 30_000);
     }
 
-    await Cache.setTabSession(newTab, {groupId, favIconUrl, thumbnail});
+    await Cache.setTabSession(newTab, {groupId, favIconUrl, thumbnail, groupPinned});
 
     if (skipListener) {
         logger.log('created', newTab.id);
@@ -729,7 +920,13 @@ export async function getNewTabIndex(tabs) {
     return tabs.slice().pop()?.index + 1 || null;
 }
 
-export async function getHighlightedIds(windowId = browser.windows.WINDOW_ID_CURRENT, clickedTab = null, pinned = false) {
+export async function getHighlightedIds(windowId = browser.windows.WINDOW_ID_CURRENT, clickedTab = null, pinned = null) {
+    // pinned defaults to null (NOT false): null is pruned from the browser.tabs.query in
+    // `get` (the `query[key] == null` strip), so the query returns BOTH pinned and unpinned
+    // highlighted tabs. Passing the literal `false` would survive the strip and return only
+    // unpinned highlighted tabs — which dropped multi-selected pinned tabs from native-menu
+    // moves ("Move tab to group" moved only 1 of N). Callers that genuinely need
+    // unpinned-only must pass `false` explicitly.
     let tabs = await get(windowId, pinned, false, {
         highlighted: true,
     });
@@ -908,6 +1105,28 @@ export async function updateThumbnail(tabId) {
     }
 }
 
+/**
+ * Move tabs into a group.
+ *
+ * Pinned-tab routing (single chokepoint): a browser-pinned tab can't ride the normal
+ * hide-based move (a pinned tab can't be hidden). Instead of dropping it + showing
+ * `pinnedTabsAreNotSupported`, route every pinned tab through
+ * `Groups.setTabGroupPinned(id, true, groupId)` (unpin → move → flag group-pinned, placed
+ * at the front of the group's pinned block). This is the single chokepoint that covers
+ * every move-into-group caller (native menu, hotkey, popup/Manage drag + context menu).
+ *
+ * No recursion / no race: `Groups.setTabGroupPinned` unpins the tab (awaited) and then
+ * calls back into `move()` with `_pinnedAlreadyHandled = true`. By then the tab is no
+ * longer pinned (the unpin promise resolved, and `getList`/`loadTabSession` re-reads the
+ * live tab), and the bypass flag short-circuits the pinned routing regardless — so the
+ * inner move can never re-enter the group-pin flow.
+ *
+ * @param {number[]} tabIds
+ * @param {string} groupId
+ * @param {object} [params]
+ * @param {boolean} [params._pinnedAlreadyHandled] - internal: set by the group-pin flow's
+ *   own `move()` call so the pinned branch is bypassed and re-entry is impossible.
+ */
 export async function move(tabIds, groupId, params = {}) {
     const log = logger.start(move, {tabIds, groupId, params});
 
@@ -937,9 +1156,25 @@ export async function move(tabIds, groupId, params = {}) {
     params.showNotificationAfterMovingTabIntoThisGroup ??= group.showNotificationAfterMovingTabIntoThisGroup;
 
     let showPinnedMessage = false;
+    const pinnedToGroupPin = [];
 
     tabs = tabs.filter(function(tab) {
         if (tab.pinned) {
+            // A browser-pinned tab can't ride the normal hide-based move (a pinned tab can't
+            // be hidden). Route ALL pinned tabs being moved into a group through the group-pin
+            // flow so they land as group-pinned (at the front of the group's pinned block)
+            // instead of being dropped + showing `pinnedTabsAreNotSupported`:
+            //  - a global pinned tab (no/other group) becomes group-pinned here;
+            //  - an already group-pinned tab keeps its group-pinned state in the new group.
+            // The `_pinnedAlreadyHandled` flag (set by the group-pin flow's own re-entrant
+            // move(), where the tab is already unpinned) prevents any loop back into here.
+            if (!params._pinnedAlreadyHandled) {
+                pinnedToGroupPin.push(tab);
+                continueTracking([tab], skippedTabs);
+                log.log('route pinned tab into group as group-pinned', tab.id);
+                return false;
+            }
+
             showPinnedMessage = true;
             continueTracking([tab], skippedTabs);
             log.log('tab pinned', tab);
@@ -959,6 +1194,19 @@ export async function move(tabIds, groupId, params = {}) {
 
         return true;
     });
+
+    // Route the collected pinned tabs through the group-pin flow: each becomes a
+    // group-pinned tab at the front of the group's pinned block. Done serially so the
+    // front-placement order is deterministic and matches the requested tab order.
+    const groupPinnedResultTabs = [];
+    for (const tab of pinnedToGroupPin) {
+        const ok = await Groups.setTabGroupPinned(tab.id, true, groupId)
+            .catch(log.onCatch(['cant group-pin tab into group', tab.id, groupId], false));
+
+        if (ok) {
+            groupPinnedResultTabs.push(tab);
+        }
+    }
 
     log.log('active tabs', activeTabs, 'tabs to move COUNT:', tabs.length);
 
@@ -1060,6 +1308,20 @@ export async function move(tabIds, groupId, params = {}) {
 
         await Promise.all(tabs.map(tab => Cache.setTabGroup(tab.id, groupId)));
 
+        // SYNC (no-data-loss): moving a tab into a group runs through skipTracking, so the
+        // onCreated/onMoved capture hooks early-return and NO delta is emitted. A NORMAL
+        // grouped tab's only other route into sync is the bootstrap snapshot — and if that
+        // snapshot misses it (unloaded group, capture timing) the tab silently fails to
+        // replicate, while a group-pinned tab survives because setTabGroupPinned emits its
+        // own explicit delta. Mirror that here: emit an explicit tab.add for each moved
+        // grouped tab so it has a snapshot-independent replication route, exactly like
+        // pinned tabs. DeltaCapture.tabAdded self-suppresses during sync-apply (isApplying)
+        // so the apply path that calls move() never recurses, gates on the syncable
+        // allow-list, and is idempotent w.r.t. bootstrap (once the uid is logged, bootstrap
+        // won't double-add it). The groupId session value is committed above, so tabAdded
+        // (which reads Cache.getTabGroup) sees the tab as grouped. Best-effort, never blocks.
+        await Promise.all(tabs.map(tab => DeltaCapture.tabAdded(tab)));
+
         Groups.sendUpdatedAll();
 
         log.log('end moving');
@@ -1078,8 +1340,10 @@ export async function move(tabIds, groupId, params = {}) {
     }
 
     if (!tabs.length) {
+        // No normal tabs moved. If we group-pinned some, return them so callers see the
+        // moved tabs; setTabGroupPinned already placed them and sent its own updates.
         log.stop('empty tabs');
-        return [];
+        return groupPinnedResultTabs;
     }
 
     let [firstTab] = activeTabs.length ? activeTabs : tabs;
@@ -1100,7 +1364,7 @@ export async function move(tabIds, groupId, params = {}) {
 
     if (!params.showNotificationAfterMovingTabIntoThisGroup) {
         log.stop('no notify, count:', tabs.length);
-        return tabs;
+        return [...tabs, ...groupPinnedResultTabs];
     }
 
     let message = [],
@@ -1122,7 +1386,7 @@ export async function move(tabIds, groupId, params = {}) {
     });
 
     log.stop('with notify, count:', tabs.length);
-    return tabs;
+    return [...tabs, ...groupPinnedResultTabs];
 }
 
 export async function moveNative(tabs, moveProperties = {}, skipTrackingFlag = false, fixSessionAfterMove = true) {
@@ -1346,12 +1610,14 @@ export function prepareForSave(tabs, ...prepareArgs) {
 }
 
 export function prepareForSaveTab(
-        {id, url, title, cookieStoreId, favIconUrl, openerTabId, groupId, thumbnail, lastAccessed},
+        {id, url, title, cookieStoreId, favIconUrl, openerTabId, groupId, thumbnail, lastAccessed, uid, lastModified, groupPinned},
         includeGroupId = false,
         includeFavIconUrl = false,
         includeThumbnail = false,
         includeId = true,
-        includeLastAccessed = true
+        includeLastAccessed = true,
+        includeUid = true,
+        includeLastModified = true
     ) {
     const tab = {url};
 
@@ -1385,6 +1651,21 @@ export function prepareForSaveTab(
 
     if (includeLastAccessed && lastAccessed) {
         tab.lastAccessed = lastAccessed;
+    }
+
+    // stable per-tab identity for sync (B3 "modification beats deletion"); additive plumbing only
+    if (includeUid && uid) {
+        tab.uid = uid;
+    }
+
+    if (includeLastModified && lastModified) {
+        tab.lastModified = lastModified;
+    }
+
+    // group-scoped pin flag: persist so it survives archive/restore/save (additive,
+    // default absent). A group-pinned tab is pinned only while its group is active.
+    if (groupPinned) {
+        tab.groupPinned = true;
     }
 
     return tab;
