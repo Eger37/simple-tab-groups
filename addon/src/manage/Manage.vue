@@ -569,6 +569,12 @@ export default {
                             <img v-if="tab.thumbnail" :src="tab.thumbnail" loading="lazy" decoding="async">
                         </div>
 
+                        <div v-if="tab.groupPinned" class="group-pinned-indicator" :title="lang('pinTabInGroupTitle')">
+                            <figure class="image is-16x16">
+                                <img src="/icons/thumbtack.svg" />
+                            </figure>
+                        </div>
+
                         <div
                             @mousedown.middle.prevent
                             @mouseup.middle.prevent="!group.isArchive && removeTab(tab)"
@@ -735,6 +741,7 @@ export default {
         @remove="removeTab"
         @update-thumbnail="updateTabThumbnail"
         @set-group-icon="setTabIconAsGroupIcon"
+        @pin-in-group="toggleTabGroupPinned"
         @move-tab="moveTabs"
         @move-tab-new-group="moveTabToNewGroup"
         ></context-menu-tab>
@@ -945,10 +952,20 @@ export default {
             > .tab-icon,
             > .delete-tab-button,
             > .cookie-container,
+            > .group-pinned-indicator,
             > .refresh-icon,
             > .tab-title {
                 position: absolute;
                 display: flex;
+            }
+
+            > .group-pinned-indicator {
+                align-items: start;
+                justify-content: end;
+                top: var(--inner-indent);
+                right: calc(var(--inner-indent) + var(--tab-icons-size));
+                width: var(--tab-icons-size);
+                height: var(--tab-icons-size);
             }
 
             &:not(.has-thumbnail) > .tab-icon {

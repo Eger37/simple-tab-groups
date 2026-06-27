@@ -814,6 +814,9 @@ export default {
                                 </figure>
                             </div>
                             <div class="item-title clip-text icon-text">
+                                <figure v-if="tab.groupPinned" class="icon image is-16x16 group-pinned-indicator" :title="lang('pinTabInGroupTitle')">
+                                    <img src="/icons/thumbtack.svg" />
+                                </figure>
                                 <figure v-if="tab.container" :title="tab.container?.name" :class="`icon image is-16x16 userContext-icon identity-icon-${tab.container?.icon} identity-color-${tab.container?.color}`"></figure>
                                 <span class="discarded-color" v-text="getTabTitle(tab)"></span>
                             </div>
@@ -845,6 +848,9 @@ export default {
                                 <img v-else :src="tab.favIconUrl" loading="lazy" decoding="async" />
                             </figure>
                             <div class="item-title clip-text icon-text">
+                                <figure v-if="tab.groupPinned" class="icon image is-16x16 group-pinned-indicator" :title="lang('pinTabInGroupTitle')">
+                                    <img src="/icons/thumbtack.svg" />
+                                </figure>
                                 <figure v-if="showMuteIconTab(tab)" class="icon image is-16x16" @click.stop="toggleMuteTab(tab)" :title="tab.audible ? lang('muteTab') : lang('unMuteTab')">
                                     <img :src="tab.audible ? '/icons/audio.svg' : '/icons/audio-mute.svg'" />
                                 </figure>
@@ -1064,6 +1070,9 @@ export default {
                         <img :src="tab.favIconUrl" loading="lazy" decoding="async" />
                     </figure>
                     <div class="item-title clip-text icon-text">
+                        <figure v-if="tab.groupPinned" class="icon image is-16x16 group-pinned-indicator" :title="lang('pinTabInGroupTitle')">
+                            <img src="/icons/thumbtack.svg" />
+                        </figure>
                         <figure v-if="tab.container" :title="tab.container?.name" :class="`icon image is-16x16 userContext-icon identity-icon-${tab.container?.icon} identity-color-${tab.container?.color}`"></figure>
                         <span class="discarded-color" v-text="getTabTitle(tab)"></span>
                     </div>
@@ -1109,6 +1118,9 @@ export default {
                             <img v-else :src="tab.favIconUrl" loading="lazy" decoding="async" />
                         </figure>
                         <div class="item-title clip-text icon-text">
+                            <figure v-if="tab.groupPinned" class="icon image is-16x16 group-pinned-indicator" :title="lang('pinTabInGroupTitle')">
+                                <img src="/icons/thumbtack.svg" />
+                            </figure>
                             <figure
                                 v-if="showMuteIconTab(tab)"
                                 @click.stop="toggleMuteTab(tab)"
@@ -1250,6 +1262,7 @@ export default {
         @discard="discardTab"
         @remove="removeTab"
         @set-group-icon="setTabIconAsGroupIcon"
+        @pin-in-group="toggleTabGroupPinned"
         @move-tab="moveTabs"
         @move-tab-new-group="moveTabToNewGroup"
         ></context-menu-tab>
@@ -1540,6 +1553,10 @@ html {
                 align-items: center;
                 color: var(--discarded-text-color);
                 gap: var(--gap-indent);
+            }
+
+            .group-pinned-indicator {
+                flex: none;
             }
         }
 
