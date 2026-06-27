@@ -15,6 +15,10 @@ function copyPathObj(path) {
         return {
             from: path,
             to: path,
+            // never ship dev-only test files (e.g. js/sync/delta/*.test.mjs) into the addon
+            globOptions: {
+                ignore: ['**/*.test.*'],
+            },
         };
     }
 
