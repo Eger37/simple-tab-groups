@@ -1,0 +1,346 @@
+
+/**
+ * Local append-only delta event log for hybrid snapshot + delta sync (Phase P1).
+ *
+ * This module records the changes the user makes to tabs and groups as an ordered
+ * stream of events for THIS device. It is purely additive and inert in P1: events
+ * accumulate locally and nothing consumes them yet. The replay engine (P2) and the
+ * gist transport (P3) build on top of this; see `.project/DESIGN_DELTA_SYNC.md`.
+ *
+ * ## Event schema (per DESIGN_DELTA_SYNC.md "Event schema")
+ * Each event:
+ *   { seq, ts, op, ...payload }
+ * where
+ *   - `seq` — per-device monotonic integer, assigned on append. Disambiguates
+ *      same-device ordering when wall-clock `ts` ties.
+ *   - `ts`  — `Utils.unixNowMs()` at append time (best-effort wall clock).
+ *   - `op`  — one of the OPS below.
+ *
+ * Payloads by op (the writer always has the full local record, so modify/add carry
+ * it in full so a later resurrection during replay is faithful):
+ *   tab.add      { groupId, tab: <full tab record incl. uid> }
+ *   tab.modify   { groupId, tab: <full tab record incl. uid> }
+ *   tab.move     { groupId, uid, toIndex }
+ *   tab.remove   { groupId, uid }
+ *   group.add    { group: <full group record> }
+ *   group.modify { group: <full or partial group record incl. id> }
+ *   group.move   { groupId, toIndex }   // group reordered to 0-based position in groups list
+ *   group.remove { groupId }
+ *   option.set   { key, value }   // one global STG option key changed to `value`
+ *   pinned.add    { tab: <full pinned tab record incl. uid> }
+ *   pinned.modify { tab: <full pinned tab record incl. uid> }
+ *   pinned.move   { uid, toIndex }
+ *   pinned.remove { uid }
+ *
+ * Global pinned tabs are window-global in Firefox (NOT in any STG group), so their
+ * events carry NO groupId — identity is the tab `uid` and they fold into a separate
+ * ordered `pinnedTabs` array in the snapshot (mirrors the legacy backup field
+ * `data.pinnedTabs`), rather than into `groups`. See `sync/delta/replay.js` for how
+ * they replay. A tab that becomes pinned emits `pinned.add` (and a `tab.remove` for the
+ * group it left); a tab that becomes unpinned emits `pinned.remove`.
+ *
+ * The persisted file shape (for the future transport) is:
+ *   { v: SCHEMA_VERSION, deviceId, events: [ ...event ] }
+ *
+ * ## Backing store
+ * `browser.storage.local` (the same async store the snapshot uses, see storage.js),
+ * NOT the synchronous localStorage proxy. An append-only log must stay cheap to
+ * append to and survive restarts; the async storage handles larger payloads and
+ * does not block, whereas the localStorage proxy re-stringifies a whole value per
+ * key write and is synchronous. An in-memory mirror keeps `seq` monotonic and makes
+ * reads cheap; appends serialize through a write chain so concurrent appends keep
+ * their order and never lose an event.
+ *
+ * @module sync/delta/delta-log
+ */
+
+import '/js/prefixed-storage.js';
+import * as Utils from '/js/utils.js';
+import Logger from '/js/logger.js';
+import {getDeviceId} from './device-id.js';
+
+const logger = new Logger('DeltaLog');
+
+/** Event schema version (the `v` field in the persisted file). */
+export const SCHEMA_VERSION = 1;
+
+/** browser.storage.local key holding this device's event log. */
+const STORAGE_KEY = 'syncDeltaLog';
+
+/**
+ * Supported operations. Frozen so callers can reference them without typos.
+ * @readonly
+ */
+export const OPS = Object.freeze({
+    TAB_ADD: 'tab.add',
+    TAB_MODIFY: 'tab.modify',
+    TAB_MOVE: 'tab.move',
+    TAB_REMOVE: 'tab.remove',
+    GROUP_ADD: 'group.add',
+    GROUP_MODIFY: 'group.modify',
+    GROUP_MOVE: 'group.move',
+    GROUP_REMOVE: 'group.remove',
+    // one global STG option key set to a value; per-key last-writer-wins on replay
+    OPTION_SET: 'option.set',
+    // global pinned tabs (window-global, no groupId); fold into `snapshot.pinnedTabs`
+    PINNED_ADD: 'pinned.add',
+    PINNED_MODIFY: 'pinned.modify',
+    PINNED_MOVE: 'pinned.move',
+    PINNED_REMOVE: 'pinned.remove',
+});
+
+const VALID_OPS = new Set(Object.values(OPS));
+
+// in-memory mirror of the persisted log; lazily hydrated on first access
+let events = null;
+let lastSeq = 0;
+
+// memoizes the single in-flight first hydration so concurrent first-touch callers all
+// await ONE `browser.storage.local.get(...)` + migration instead of each running their own
+// (which would clobber `events`/`lastSeq` and lose an event + collide its seq). Reset to
+// null by clear() so a post-reset hydration can re-run. See `ensureLoaded`.
+let loadingPromise = null;
+
+// serializes persistence so overlapping appends keep order and don't clobber
+let writeChain = Promise.resolve();
+
+/**
+ * Strip the favicon from the tab record a HISTORICAL event carries, in place (migration).
+ *
+ * Recovery for the multi-GB `syncDeltaLog` bloat: a single favicon-only event was duplicated
+ * across hundreds of thousands of already-stored events. Those historical favicons are
+ * REDUNDANT — the snapshot keeps each tab's latest favicon and the live tabs re-capture it
+ * within a sync or two — so on hydrate we drop EVERY event's `favIconUrl` unconditionally
+ * (not just data:/oversized ones). This collapses the existing bloat without a manual reset,
+ * favicons re-establish from live state, and it's idempotent: a log with no favicons left
+ * triggers no rewrite. Favicons are cosmetic, so identity (url/title/group/pinned) is
+ * untouched. Going forward there are NO favicon-only events (the favicon just rides along as
+ * one field of a record written for a real change), so the log stays small.
+ *
+ * @param {object} event - a single delta event (mutated in place).
+ * @returns {boolean} true if the event was modified.
+ */
+function stripEventFavicon(event) {
+    // tab.add / tab.modify / pinned.add / pinned.modify all carry the record under `tab`.
+    const tab = event?.tab;
+    if (tab && typeof tab === 'object' && Object.hasOwn(tab, 'favIconUrl')) {
+        delete tab.favIconUrl;
+        return true;
+    }
+    return false;
+}
+
+/**
+ * Hydrate the in-memory mirror from storage exactly once.
+ *
+ * On hydrate we run a ONE-TIME MIGRATION over the stored log: every historical event has
+ * its `favIconUrl` stripped and the log is rewritten ONCE. This is the recovery path for
+ * existing users whose `syncDeltaLog` had grown to gigabytes of duplicated base64 favicons
+ * — it reclaims that RAM without a manual reset. Safe + idempotent: the stripped favicons
+ * are redundant (the snapshot holds each tab's latest favicon and live tabs re-capture it),
+ * identity/url/title/group/pinned are untouched, and a log already free of favicons triggers
+ * no rewrite.
+ *
+ * ## First-hydration race
+ * The hydration is memoized as a SINGLE in-flight promise (`loadingPromise`). A bare
+ * `if (events !== null) return` guard is not enough: `events` is only assigned AFTER the
+ * `await browser.storage.local.get(...)`, so two concurrent first-touch callers (e.g. a
+ * capture `append` racing the transport's `getEvents`/`append` at background startup) would
+ * BOTH observe `events === null`, BOTH await the get, and the second would overwrite `events`
+ * with a fresh stored array — dropping any event the first already pushed and recomputing
+ * `lastSeq` from storage, so the next append reuses a collided seq (data loss). Memoizing the
+ * promise makes every caller await the same hydration; the body runs at most once per reset.
+ * If the hydration FAILS, `loadingPromise` is cleared so a later call can retry (preserving
+ * the pre-fix behaviour of leaving `events === null` on a failed get) rather than caching the
+ * rejection forever.
+ * @returns {Promise<void>}
+ */
+function ensureLoaded() {
+    return loadingPromise ??= (async () => {
+        const stored = await browser.storage.local.get(STORAGE_KEY);
+        const log = stored[STORAGE_KEY];
+
+        events = Array.isArray(log?.events) ? log.events : [];
+        lastSeq = events.length ? events[events.length - 1].seq : 0;
+
+        // one-time recovery: strip favicons from already-stored events and rewrite if any were
+        // found. Done after `events`/`lastSeq` are set so persist() writes the cleaned log.
+        let changed = false;
+        for (const event of events) {
+            if (stripEventFavicon(event)) {
+                changed = true;
+            }
+        }
+        if (changed) {
+            logger.info('migrated stored delta log: stripped historical favicons', {events: events.length});
+            await persist();
+        }
+    })().catch(err => {
+        // let a later first touch retry instead of permanently caching the rejection.
+        loadingPromise = null;
+        throw err;
+    });
+}
+
+/**
+ * Persist the current in-memory log. Serialized through `writeChain`.
+ * @returns {Promise<void>}
+ */
+function persist() {
+    writeChain = writeChain.then(() => browser.storage.local.set({
+        [STORAGE_KEY]: {
+            v: SCHEMA_VERSION,
+            deviceId: getDeviceId(),
+            events,
+        },
+    }));
+
+    return writeChain;
+}
+
+/**
+ * Append one event to this device's log. Assigns the next `seq`, stamps `ts`,
+ * and persists. Unknown ops are rejected (logged + ignored) so a caller typo can
+ * never corrupt the stream.
+ *
+ * @param {string} op - one of {@link OPS}.
+ * @param {object} [payload={}] - op-specific payload (see module docs).
+ * @returns {Promise<object|undefined>} the appended event, or undefined if ignored.
+ */
+export async function append(op, payload = {}) {
+    if (!VALID_OPS.has(op)) {
+        logger.error('append: unknown op', op);
+        return;
+    }
+
+    await ensureLoaded();
+
+    const event = {
+        seq: ++lastSeq,
+        ts: Utils.unixNowMs(),
+        op,
+        ...payload,
+    };
+
+    events.push(event);
+
+    await persist();
+
+    return event;
+}
+
+/**
+ * Returns a shallow copy of all events currently in this device's log.
+ * @returns {Promise<object[]>}
+ */
+export async function getEvents() {
+    await ensureLoaded();
+    return events.slice();
+}
+
+/**
+ * Returns events with `seq` strictly greater than `seq` (in order).
+ * Used by the future transport to push only not-yet-synced events.
+ * @param {number} seq
+ * @returns {Promise<object[]>}
+ */
+export async function getEventsSince(seq) {
+    await ensureLoaded();
+    return events.filter(event => event.seq > seq);
+}
+
+/**
+ * Drops events with `seq` less than or equal to `seq` (compaction support, P4).
+ * Events newer than `seq` are kept; `lastSeq` is unchanged so future appends stay
+ * monotonic even after the head is trimmed.
+ * @param {number} seq
+ * @returns {Promise<void>}
+ */
+export async function clearUpTo(seq) {
+    await ensureLoaded();
+    events = events.filter(event => event.seq > seq);
+    await persist();
+}
+
+/**
+ * Returns the highest assigned seq (0 if empty). Useful for watermark math (P3/P4).
+ * @returns {Promise<number>}
+ */
+export async function getLastSeq() {
+    await ensureLoaded();
+    return lastSeq;
+}
+
+/**
+ * Fully reset this device's local delta log: empties the persisted events, resets the
+ * `seq` counter to 0, and refreshes the in-memory mirror. Unlike {@link clearUpTo}
+ * (which trims the head but keeps `lastSeq` monotonic for ongoing compaction), this is
+ * a hard reset for the recovery flow — after it the next append starts from `seq` 1,
+ * matching a fresh install. Local only: it never touches the cloud delta file (the
+ * stale cloud file is reconciled/compacted on the next sync, or deleted manually).
+ * @returns {Promise<void>}
+ */
+export async function clear() {
+    await ensureLoaded();
+    events = [];
+    lastSeq = 0;
+    // Reset the memoized hydration too: the in-memory mirror above is now the authoritative
+    // (empty) state and is persisted below, but dropping `loadingPromise` lets a later first
+    // touch re-run the memoized hydration cleanly instead of being short-circuited by the
+    // already-resolved promise from before the reset.
+    loadingPromise = null;
+    await persist();
+}
+
+/**
+ * RESET/WATERMARK TRAP recovery (E2). After a local {@link resetSyncState}, this
+ * device's `lastSeq` is rewound to 0 so fresh appends start at seq 1 — but the
+ * CLOUD snapshot still carries `watermark[thisDevice] = N` from before the reset,
+ * which reset cannot clear. replay() dedups every event with `seq <= watermark`
+ * (replay.js rule 4), so those re-issued low-seq events would be SILENTLY SKIPPED
+ * and the post-reset local changes lost until seq organically climbs past N.
+ *
+ * This fast-forwards THIS device's log so EVERY event sits strictly above `minSeq`
+ * (the stale cloud watermark): it shifts every event's `seq` up by a SINGLE constant
+ * offset chosen so the LOWEST event seq lands at `minSeq + 1` (preserving relative
+ * order and any gaps), and bumps `lastSeq` to match, so future appends also stay above
+ * the watermark. For an EMPTY log there is no event to anchor on, so it just advances
+ * `lastSeq` to `minSeq + 1`. A no-op when nothing is at risk — i.e. the lowest event
+ * seq already exceeds `minSeq` (and, for an empty log, `lastSeq` already does) — which
+ * is the normal, non-reset case.
+ *
+ * Safe to call on every sync: it only acts when the trap is actually present, never
+ * lowers a seq, and keeps the log monotonic. The caller must re-read pending events
+ * afterwards (their seqs may have changed).
+ *
+ * @param {number} minSeq - the highest seq already folded into the cloud base for this
+ *   device (its cloud watermark). Events must end up strictly greater than this.
+ * @returns {Promise<boolean>} true iff a fast-forward was applied (seqs shifted).
+ */
+export async function fastForwardSeqsAbove(minSeq) {
+    await ensureLoaded();
+
+    if (!Number.isFinite(minSeq)) {
+        return false;
+    }
+
+    // anchor on the LOWEST event seq (the one most at risk of dedup); for an empty log
+    // anchor on lastSeq + 1 so the counter alone advances. A single constant offset
+    // preserves relative order and any pre-existing gaps.
+    const lowest = events.length
+        ? events.reduce((min, e) => (e.seq < min ? e.seq : min), Infinity)
+        : lastSeq + 1;
+
+    if (lowest > minSeq) {
+        return false; // normal path: nothing sits at/below the cloud watermark
+    }
+
+    const offset = (minSeq + 1) - lowest;
+    for (const event of events) {
+        event.seq += offset;
+    }
+    lastSeq += offset;
+
+    await persist();
+    return true;
+}

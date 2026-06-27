@@ -1,0 +1,199 @@
+
+/**
+ * Pure URL classifiers shared by the delta capture + transport layers so they all
+ * agree on WHICH tab URLs roam through delta sync, and how STG's "unsupported URL"
+ * stub page maps back to the original URL it embeds.
+ *
+ * ## Why a separate predicate from `Utils.isUrlAllowToCreate`
+ * `isUrlAllowToCreate` governs REAL tab creation: it deliberately rejects privileged
+ * `about:` URLs (about:debugging, about:config, …) so that `Tabs.create` substitutes
+ * the moz-extension "unsupported URL" stub page instead of failing. We must NOT broaden
+ * it, or the stub substitution stops triggering.
+ *
+ * Sync, however, SHOULD carry those privileged `about:` URLs: the receiving machine
+ * renders them as the stub (showing the original URL text) rather than silently dropping
+ * the tab. So {@link isUrlSyncable} is a WIDER allow-list than `isUrlAllowToCreate`: it
+ * admits non-trivial `about:` URLs on top of everything `isUrlAllowToCreate` admits, but
+ * still rejects the trivial / default new-tab states (about:blank, about:newtab,
+ * about:home, about:privatebrowsing) which are pure noise.
+ *
+ * ## Feedback-loop guard ({@link unwrapStubUrl})
+ * After a receiving machine renders a synced `about:debugging` tab as the stub, that
+ * tab's LIVE url becomes `moz-extension://<uuid>/help/stg-unsupported-url.html?url=about:debugging`
+ * — which IS allowed by `isUrlAllowToCreate`, so capture would otherwise record it as a
+ * competing tab record that diverges from the original `about:` identity. {@link unwrapStubUrl}
+ * decodes the stub back to the embedded original `about:` URL so the captured record keeps
+ * the original identity (no moz-extension divergence loop). It is the inverse of
+ * `tabs.js` `createUnsupportedUrlPage` (which stores the original in the `?url=` param).
+ *
+ * ## Purity
+ * No `browser.*` and no `constants.js` import (which is browser-dependent), so the pure
+ * unit tests can import this module directly under node. The stub page is matched by its
+ * stable path suffix (`/help/stg-unsupported-url.html`) rather than the per-install
+ * moz-extension UUID, which keeps the match pure and install-independent.
+ *
+ * @module sync/delta/url-sync
+ */
+
+/**
+ * Trivial / empty `about:` URLs that represent a default new-tab / blank state. These are
+ * noise (every fresh tab is one of these) and must NOT sync, even though they are `about:`
+ * URLs. `about:blank` additionally passes `Utils.isUrlAllowToCreate`, but it is still not
+ * worth roaming.
+ * @readonly
+ */
+export const NON_SYNCABLE_ABOUT_URLS = Object.freeze(new Set([
+    'about:blank',
+    'about:newtab',
+    'about:home',
+    'about:privatebrowsing',
+]));
+
+/** Path suffix of STG's "unsupported URL" stub page (see `tabs.js` createUnsupportedUrlPage). */
+const STUB_PAGE_PATH_SUFFIX = '/help/stg-unsupported-url.html';
+
+/**
+ * Does this tab URL roam through delta sync? A WIDER allow-list than
+ * `Utils.isUrlAllowToCreate`: everything that admits, PLUS non-trivial `about:` URLs
+ * (about:debugging, about:config, about:addons, about:preferences, …) which the receiving
+ * machine renders as the stub page. Excludes the trivial new-tab/blank `about:` states
+ * ({@link NON_SYNCABLE_ABOUT_URLS}).
+ *
+ * Pure string predicate (no `browser.*`).
+ *
+ * @param {string} url
+ * @returns {boolean}
+ */
+export function isUrlSyncable(url) {
+    if (typeof url !== 'string' || !url) {
+        return false;
+    }
+
+    if (NON_SYNCABLE_ABOUT_URLS.has(url)) {
+        return false;
+    }
+
+    // non-trivial about: URL (about:debugging, about:config, …): syncable. The receiving
+    // machine can't create it directly (isUrlAllowToCreate rejects it) so apply renders
+    // the stub page — but the synced RECORD carries the real about: url for identity.
+    if (url.startsWith('about:')) {
+        return true;
+    }
+
+    // everything the real-creation allow-list admits (http, moz-extension, view-source,
+    // about:blank). about:blank is already excluded above, so it never reaches here.
+    return /^((http|moz-extension|view-source)|about:blank)/.test(url);
+}
+
+/**
+ * If `url` is STG's moz-extension "unsupported URL" stub page, return the ORIGINAL url it
+ * embeds (the `?url=` param); otherwise return `url` unchanged. Inverse of `tabs.js`
+ * `createUnsupportedUrlPage`. Used by the capture layer so a synced `about:` tab whose
+ * LIVE url is the stub is recorded under its original `about:` identity rather than the
+ * moz-extension url (which would diverge from the originating machine).
+ *
+ * Pure (matches the stub by its stable path suffix, not the per-install UUID). Never
+ * throws — a malformed url falls through to the original.
+ *
+ * @param {string} url
+ * @returns {string}
+ */
+export function unwrapStubUrl(url) {
+    if (typeof url !== 'string' || !url.startsWith('moz-extension://')) {
+        return url;
+    }
+
+    try {
+        const parsed = new URL(url);
+        if (parsed.pathname.endsWith(STUB_PAGE_PATH_SUFFIX)) {
+            const original = parsed.searchParams.get('url');
+            if (original) {
+                return original;
+            }
+        }
+    } catch {
+        // malformed url — fall through to original
+    }
+
+    return url;
+}
+
+/**
+ * STUB-AWARE url match used by the sync-apply uid STAMPING step ({@link module:sync/delta/delta-sync}):
+ * does a freshly-created live tab's url correspond to a create source's url?
+ *
+ * A privileged `about:` source (about:debugging, about:memory, …) is created as STG's
+ * moz-extension "unsupported URL" stub, so the live tab's url is the stub while the source url is
+ * the original `about:…`. Without decoding, the stamp's url match FAILS for such tabs, leaving them
+ * UNSTAMPED → re-created every cycle (the about:/stub re-flood). Comparing the live url BOTH raw and
+ * stub-decoded fixes that. Pure (delegates to {@link unwrapStubUrl}).
+ *
+ * @param {string} liveUrl - the created tab's live url (may be the stub).
+ * @param {string} sourceUrl - the sync record's url.
+ * @returns {boolean}
+ */
+export function liveUrlMatchesSource(liveUrl, sourceUrl) {
+    return liveUrl === sourceUrl || unwrapStubUrl(liveUrl) === sourceUrl;
+}
+
+/**
+ * NO-OP CONVERGENCE GUARD for the content-update apply ({@link module:sync/delta/delta-sync}
+ * `applyTabContentUpdate`): should the transport actually navigate a LOADED tab to `targetUrl`,
+ * or is it already there (so navigating would be a wasteful re-load — the "loads infinitely"
+ * spinner when the planner re-emits the same url every cycle)?
+ *
+ * Navigate ONLY when the tab's CURRENT url (stub-decoded so a stub-rendered about: tab compares by
+ * its embedded identity, which is what the target carries) differs from the target. Equal ⇒ no-op.
+ * Pure (delegates to {@link unwrapStubUrl}).
+ *
+ * @param {string} liveUrl - the live tab's current url.
+ * @param {string} targetUrl - the url the update wants the tab to be at.
+ * @returns {boolean} true ⇒ navigate; false ⇒ already converged, do nothing.
+ */
+export function shouldNavigateLiveTabUrl(liveUrl, targetUrl) {
+    return unwrapStubUrl(liveUrl) !== targetUrl;
+}
+
+/**
+ * Maximum length of a `favIconUrl` we are willing to carry in a synced record. We KEEP
+ * favicons — including inline `data:` URIs — so every synced/sleeping tab shows an icon;
+ * a normal 16–32px PNG favicon is ~1–4 KB. The cap exists only to drop a PATHOLOGICALLY
+ * large favicon (a stray multi-hundred-KB data: blob) that would bloat the snapshot/log
+ * out of proportion. ~50 000 chars ≈ 50 KB comfortably clears real favicons.
+ * @readonly
+ */
+export const MAX_SYNCABLE_FAVICON_LENGTH = 50000;
+
+/**
+ * Sanitize a `favIconUrl` for storage in a delta event / snapshot record.
+ *
+ * Favicons are KEPT — including `data:` URIs — so every synced tab (and every sleeping
+ * tab restored on another device) shows its icon. The cost is BOUNDED structurally: a
+ * favicon is never its own event — it only ever rides along as one field inside a record
+ * written for a real reason (tab.add / tab.modify on a url/title change, or the compaction
+ * snapshot), so the resolved snapshot holds exactly one (latest) favicon per tab and a
+ * single favicon can never be duplicated across hundreds of thousands of events again
+ * (the original 5 GB bloat was a favicon-only event firing on every favicon tick).
+ *
+ * The ONLY thing dropped here (returns undefined) is a single PATHOLOGICALLY large favicon
+ * — over {@link MAX_SYNCABLE_FAVICON_LENGTH} (~50 KB). That is far above a real 16–32px
+ * favicon, so normal data: PNGs pass through unchanged. Favicons are cosmetic (they
+ * re-fetch from the live page on load), so dropping an oversized one never affects tab
+ * identity (url/title/group/pinned).
+ *
+ * Pure string function (no `browser.*`). Returns `undefined` when the favicon must be
+ * dropped, so callers can simply assign the result (an `undefined` field is omitted by
+ * structured clone / JSON).
+ *
+ * @param {string|undefined} favIconUrl
+ * @returns {string|undefined} the favicon url to store, or undefined to drop it.
+ */
+export function sanitizeFavIconUrl(favIconUrl) {
+    if (typeof favIconUrl !== 'string' || !favIconUrl) {
+        return undefined;
+    }
+    if (favIconUrl.length > MAX_SYNCABLE_FAVICON_LENGTH) {
+        return undefined;
+    }
+    return favIconUrl;
+}

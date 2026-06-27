@@ -1315,6 +1315,7 @@ export default {
                             <div class="control">
                                 <div class="select">
                                 <select v-model="options.syncIntervalKey">
+                                    <option :value="INTERVAL_KEY.minutes" v-text="lang('intervalKeyMinutes')"></option>
                                     <option :value="INTERVAL_KEY.hours" v-text="lang('intervalKeyHours')"></option>
                                     <option :value="INTERVAL_KEY.days" v-text="lang('intervalKeyDays')"></option>
                                 </select>

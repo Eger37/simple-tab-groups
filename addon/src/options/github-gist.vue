@@ -29,6 +29,19 @@ export default {
 
         return {
             confirmRestoreBackupItem: null,
+            confirmResetSyncState: false,
+
+            // LOCAL-ONLY safety toggle (default ON): take a backup before applying sync.
+            syncBackupBeforeApply: Constants.DEFAULT_OPTIONS.syncBackupBeforeApply,
+
+            // LOCAL-ONLY sleep toggles for sync-created tabs (see tab-sleep.js).
+            // syncSleepNewTabs (default ON) creates synced GROUP tabs asleep, with
+            // syncActivatePreviouslyActiveTabs (default OFF) as its sub-exception.
+            // syncSleepPinnedTabs (default OFF) is a separate axis: pinned tabs load by
+            // default and only sleep when it is on.
+            syncSleepNewTabs: Constants.DEFAULT_OPTIONS.syncSleepNewTabs,
+            syncSleepPinnedTabs: Constants.DEFAULT_OPTIONS.syncSleepPinnedTabs,
+            syncActivatePreviouslyActiveTabs: Constants.DEFAULT_OPTIONS.syncActivatePreviouslyActiveTabs,
 
             sync: {
                 title: 'syncOptionLocatedFFSync',
@@ -106,6 +119,27 @@ export default {
                 Storage.set({syncOptionsLocation});
             });
         });
+
+        // load + persist the LOCAL-ONLY pre-apply backup toggle (a plain global STG
+        // option, stored via Storage like any other option).
+        Storage.get('syncBackupBeforeApply').then(({syncBackupBeforeApply}) => {
+            this.syncBackupBeforeApply = syncBackupBeforeApply;
+            this.$watch('syncBackupBeforeApply', value => {
+                Storage.set({syncBackupBeforeApply: value});
+            });
+        });
+
+        // load + persist the LOCAL-ONLY sleep/activate toggles for sync-created tabs.
+        // Each is a plain global STG option, stored via Storage like any other.
+        Storage.get(['syncSleepNewTabs', 'syncSleepPinnedTabs', 'syncActivatePreviouslyActiveTabs'])
+            .then(values => {
+                ['syncSleepNewTabs', 'syncSleepPinnedTabs', 'syncActivatePreviouslyActiveTabs'].forEach(key => {
+                    this[key] = values[key];
+                    this.$watch(key, value => {
+                        Storage.set({[key]: value});
+                    });
+                });
+            });
 
         this.$on('sync-finish', () => this.area.load(false));
     },
@@ -236,6 +270,14 @@ export default {
         async restoreBackup({version}) {
             await this.syncCloud(Cloud.TRUST_CLOUD, version);
         },
+
+        async resetSyncState() {
+            // LOCAL-only recovery: clears this device's delta-sync state in the
+            // background; the cloud gist is left untouched. Reload the area afterwards
+            // so the displayed gist/last-update info reflects the reset state.
+            await this.sendMessage('reset-cloud-sync-state');
+            await this.area.load(false);
+        },
     },
 };
 
@@ -303,6 +345,34 @@ export default {
                 </template>
             </div>
         </div>
+    </div>
+
+    <div class="field">
+        <label class="checkbox">
+            <input v-model="syncBackupBeforeApply" type="checkbox" />
+            <span v-text="lang('syncBackupBeforeApply')"></span>
+        </label>
+    </div>
+
+    <div class="field">
+        <label class="checkbox">
+            <input v-model="syncSleepNewTabs" type="checkbox" />
+            <span v-text="lang('syncSleepNewTabs')"></span>
+        </label>
+    </div>
+
+    <div class="field" style="margin-left: 1.5em;">
+        <label class="checkbox" :class="{'has-text-grey-light': !syncSleepNewTabs}">
+            <input v-model="syncActivatePreviouslyActiveTabs" type="checkbox" :disabled="!syncSleepNewTabs" />
+            <span v-text="lang('syncActivatePreviouslyActiveTabs')"></span>
+        </label>
+    </div>
+
+    <div class="field">
+        <label class="checkbox">
+            <input v-model="syncSleepPinnedTabs" type="checkbox" />
+            <span v-text="lang('syncSleepPinnedTabs')"></span>
+        </label>
     </div>
 
     <form class="field" @submit.prevent="save(area)" @reset.prevent="area.load">
@@ -430,6 +500,15 @@ export default {
             </div>
         </div>
         <div class="column is-narrow">
+            <button
+                type="button"
+                class="button is-warning is-soft mr-2"
+                :disabled="isLoadingSyncButton || area.disabled"
+                @click="confirmResetSyncState = true"
+                v-text="lang('resetSyncStateButton')"
+                ></button>
+        </div>
+        <div class="column is-narrow">
             <div class="is-right" :class="{'dropdown is-active': showTrustSyncButtons}">
                 <div :class="{'dropdown-trigger': showTrustSyncButtons}">
                     <button
@@ -491,6 +570,25 @@ export default {
             </a>
         </div>
         <strong v-text="lang('overwriteCurrent')"></strong>
+    </popup>
+
+    <popup
+        v-if="confirmResetSyncState"
+        :title="lang('resetSyncStateButton')"
+        @reset="resetSyncState(); confirmResetSyncState = false"
+        @close-popup="confirmResetSyncState = false"
+        :buttons="
+            [{
+                event: 'reset',
+                classList: 'is-warning is-soft',
+                lang: 'resetSyncStateButton',
+                focused: true,
+            }, {
+                event: 'close-popup',
+                lang: 'cancel',
+            }]
+        ">
+        <div class="block" v-text="lang('resetSyncStateConfirm')"></div>
     </popup>
 
 </div>

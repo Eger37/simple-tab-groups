@@ -9,7 +9,7 @@ import * as Utils from '/js/utils.js';
 import Lang from '/js/lang.js';
 import JSON from '/js/json.js';
 import Logger, {nativeErrorToObject, objectToNativeError} from '/js/logger.js';
-import GithubGist from './githubgist.js';
+import {createCloudProvider} from './provider.js';
 import * as CloudBroadcast from '/js/broadcast.js?channel=cloud';
 import * as SyncStorage from '../sync-storage.js';
 import * as Storage from '/js/storage.js';
@@ -32,6 +32,14 @@ const canDoSynchronization = params.has('can-do-synchronization');
 export const TRUST_LOCAL = 'trust-local';
 export const TRUST_CLOUD = 'trust-cloud';
 
+// Entry-point switch for the live sync path (Phase P3b). When true, the manual Sync
+// button and the auto/retry alarm route through the delta pipeline
+// (`delta-sync.js` deltaSynchronization) instead of the legacy URL-based
+// `synchronization()` below. The legacy code is retained-but-bypassed: flip this to
+// false to revert to the old flow with no other change. There is intentionally no
+// user-facing toggle.
+export const USE_DELTA_SYNC = true;
+
 export const ALARM_NAME = 'cloud';
 export const ALARM_NAME_RETRY = 'cloud-retry';
 export const ERROR_NOTIFICATION_ID = 'cloud-error';
@@ -42,6 +50,9 @@ export const TRIGGER_RETRY = 'cloud-trigger-retry';
 
 export const NETWORK_RETRY_DELAY_MINUTES = 3;
 const MAX_NETWORK_RETRY_ATTEMPTS = 3;
+// Cap the rate-limit backoff so a far-future / bogus reset timestamp can't park the retry
+// alarm for hours. A GitHub primary-limit window is at most ~60 min; we wake a bit past it.
+const MAX_RATE_LIMIT_BACKOFF_MINUTES = 65;
 
 let inProgress = false;
 
@@ -71,7 +82,9 @@ export class CloudError extends Error {
     }
 }
 
-function send(action, data = {}) {
+// Exported so the delta transport (delta-sync.js) reuses the same broadcast channel
+// and the UI/background progress wiring works identically for both sync paths.
+export function send(action, data = {}) {
     CloudBroadcast.send({action, ...data});
 }
 
@@ -141,7 +154,7 @@ async function sync(trust = null, revision = null, progressFunc = null) {
         log.throwError('unknown source of trust argument');
     }
 
-    const {syncOptionsLocation} = await Storage.get('syncOptionsLocation');
+    const {syncOptionsLocation, syncProvider} = await Storage.get(['syncOptionsLocation', 'syncProvider']);
 
     if (syncOptionsLocation === Constants.SYNC_STORAGE_FSYNC) {
         if (!SyncStorage.IS_AVAILABLE) {
@@ -162,14 +175,11 @@ async function sync(trust = null, revision = null, progressFunc = null) {
     let cloudInstance;
 
     try {
-        cloudInstance = new GithubGist(
-            syncOptions.githubGistToken,
-            syncOptions.githubGistFileName
-        );
+        cloudInstance = createCloudProvider(syncProvider, syncOptions);
     } catch (error) {
         const cloudError = new CloudError(error.message, {cause: error});
         storage.lastError = String(cloudError);
-        log.throwError('create GithubGist instance', cloudError);
+        log.throwError('create cloud provider instance', cloudError);
     }
 
     const Cloud = cloudInstance;
@@ -197,7 +207,7 @@ async function sync(trust = null, revision = null, progressFunc = null) {
         } else {
             const cloudError = new CloudError(error.message, {cause: error});
             storage.lastError = String(cloudError);
-            log.throwError('get GithubGist content', cloudError);
+            log.throwError('get cloud content', cloudError);
         }
     }
 
@@ -259,7 +269,7 @@ async function sync(trust = null, revision = null, progressFunc = null) {
         } catch (error) {
             const cloudError = new CloudError(error.message, {cause: error});
             storage.lastError = String(cloudError);
-            log.throwError('set GithubGist content', cloudError);
+            log.throwError('set cloud content', cloudError);
         }
 
         syncResult.changes.local = true; // sync date must be equal in cloud and local
@@ -267,32 +277,25 @@ async function sync(trust = null, revision = null, progressFunc = null) {
 
     progressFunc?.(85);
 
-    // remove unnecessary groups
+    // C5: DEFER the destructive local browser mutations (group unload + tab removal) until
+    // AFTER the local DB commit (saveOptions/Groups.save) below succeeds. Previously these ran
+    // first; if the later commit threw, the cloud push had already landed AND windows/tabs were
+    // already torn down, but the local options/groups DB still held the OLD state — a partial,
+    // non-rolled-back local mutation. Here we only do the non-destructive bookkeeping (mark
+    // `changes.local`, and collect the loaded-group tabs to remove); the actual removals happen
+    // post-commit, so a commit failure leaves the live browser untouched (idempotent: a re-run
+    // recomputes the same plan and removes them then).
     for (const groupToRemove of syncResult.changes.groupsToRemove) {
         syncResult.changes.local = true;
 
-        if (Groups.isLoaded(groupToRemove.id)) {
-            // remove group from windows
-            await Groups.unload(groupToRemove.id);
-
-            // remove tabs
-            if (!groupToRemove.isArchive) {
-                for (const tabToRemove of groupToRemove.tabs) {
-                    syncResult.changes.tabsToRemove.add(tabToRemove);
-                }
+        if (Groups.isLoaded(groupToRemove.id) && !groupToRemove.isArchive) {
+            for (const tabToRemove of groupToRemove.tabs) {
+                syncResult.changes.tabsToRemove.add(tabToRemove);
             }
         }
     }
 
     progressFunc?.(90);
-
-    // remove unnecessary tabs
-    if (syncResult.changes.tabsToRemove.size) {
-        // if has local changes - do silent remove. "Cloud.sync-end" event will trigger "Groups.updated.all" event and reload all groups with tabs
-        await Tabs.remove(Array.from(syncResult.changes.tabsToRemove), syncResult.changes.local);
-    }
-
-    progressFunc?.(95);
 
     // set last-update before call saveOptions, saveOptions will reset alarm and it depends on last-update time
     storage.githubGistFileName = syncOptions.githubGistFileName;
@@ -341,6 +344,25 @@ async function sync(trust = null, revision = null, progressFunc = null) {
 
         await backgroundSelf.saveOptions(syncResult.localData);
         await Groups.save(syncResult.localData.groups);
+    }
+
+    progressFunc?.(95);
+
+    // C5: local DB commit has now succeeded (or there were no local changes) — only NOW perform
+    // the destructive browser-side teardown for removed groups/tabs. If anything above threw, we
+    // never reach here, so the live browser is left intact and consistent with the un-updated
+    // local DB.
+    for (const groupToRemove of syncResult.changes.groupsToRemove) {
+        if (Groups.isLoaded(groupToRemove.id)) {
+            // remove group from windows
+            await Groups.unload(groupToRemove.id);
+        }
+    }
+
+    // remove unnecessary tabs
+    if (syncResult.changes.tabsToRemove.size) {
+        // if has local changes - do silent remove. "Cloud.sync-end" event will trigger "Groups.updated.all" event and reload all groups with tabs
+        await Tabs.remove(Array.from(syncResult.changes.tabsToRemove), syncResult.changes.local);
     }
 
     progressFunc?.(100);
@@ -477,7 +499,8 @@ async function syncGroups(localData, cloudData, sourceOfTruth, changes) {
         }
 
         if (!changes.cloud) {
-            changes.cloud = JSON.stringify(resultCloudGroups) !== JSON.stringify(cloudGroups);
+            // ignore additive identity fields (uid/lastModified) so they don't trigger needless cloud writes
+            changes.cloud = stringifyGroupsForChangeDetection(resultCloudGroups) !== stringifyGroupsForChangeDetection(cloudGroups);
         }
 
     } else if (sourceOfTruth === TRUST_CLOUD) {
@@ -988,6 +1011,32 @@ function isEqual(value1, value2) {
     return JSON.stringify(value1) === JSON.stringify(value2);
 }
 
+// New per-tab identity fields (uid/lastModified) are additive metadata for sync (see B3).
+// They must NOT influence whether a cloud write is needed: lastModified bumps on every
+// title change and uid differs across machines, so including them in the equality check
+// would trigger needless cloud writes. The uploaded snapshot still carries them - this
+// only ignores them when deciding if a write is required.
+const CHANGE_DETECTION_IGNORE_TAB_KEYS = ['uid', 'lastModified'];
+
+function stringifyGroupsForChangeDetection(groups) {
+    const stripped = groups.map(group => {
+        if (!Array.isArray(group.tabs)) {
+            return group;
+        }
+
+        return {
+            ...group,
+            tabs: group.tabs.map(tab => {
+                const cleanTab = {...tab};
+                CHANGE_DETECTION_IGNORE_TAB_KEYS.forEach(key => delete cleanTab[key]);
+                return cleanTab;
+            }),
+        };
+    });
+
+    return JSON.stringify(stripped);
+}
+
 // alarm utils
 function isNetworkError(error) {
     const message = String(error);
@@ -1004,6 +1053,37 @@ function isNetworkError(error) {
     }
 
     return isNetErr;
+}
+
+// C3: GitHub rate limiting (primary, secondary/abuse, or 429) is a TRANSIENT, retryable
+// condition — the provider encodes it as a `githubRateLimit:<unixResetMs>` langId (see
+// githubgist.js). Previously the retry classifier only recognised raw NetworkError strings,
+// so a rate-limited sync got NO backoff retry (and abuse-limit 403s were even mis-mapped to a
+// non-retryable auth error). Treat it as retryable and honour the reset time as the backoff.
+// The rate-limit signal can arrive either as a CloudError `langId` (legacy synchronization(),
+// which wraps provider errors) or only in the raw error `message` (delta-sync, whose catch
+// copies `String(e)` into `syncResult.message` and leaves `langId` undefined for un-wrapped
+// provider errors). Inspect BOTH so retry classification works on both sync paths.
+function syncErrorText(syncResult) {
+    return [syncResult?.langId, syncResult?.message].filter(s => typeof s === 'string').join(' ');
+}
+
+function getRateLimitResetMs(syncResult) {
+    const match = syncErrorText(syncResult).match(/githubRateLimit:(\d+)/);
+    if (!match) {
+        return null;
+    }
+    const resetMs = Number(match[1]);
+    return Number.isFinite(resetMs) ? resetMs : null;
+}
+
+// A retryable (transient) failure: a raw network error, a GitHub rate-limit, or a snapshot
+// If-Match precondition failure (a peer wrote concurrently — C1). All warrant an automatic
+// backoff retry (which re-pulls + re-merges) rather than a user-facing hard error.
+function isRetryableSyncError(syncResult) {
+    return isNetworkError(objectToNativeError(syncResult))
+        || getRateLimitResetMs(syncResult) !== null
+        || syncErrorText(syncResult).includes('githubPreconditionFailed');
 }
 
 export function onSyncUiRequestListener() {
@@ -1034,7 +1114,9 @@ export async function shouldShowSyncErrorNotification(syncResult, trigger) {
         return result;
     }
 
-    if (trigger === TRIGGER_AUTO && !isNetworkError(objectToNativeError(syncResult))) {
+    // A transient/retryable failure (network OR rate-limit) is silently retried in the
+    // background until attempts are exhausted; only then surface a notification.
+    if (trigger === TRIGGER_AUTO && !isRetryableSyncError(syncResult)) {
         return true;
     }
 
@@ -1047,11 +1129,21 @@ export async function getSyncRetryDelayInMinutes(syncResult, trigger) {
         return 0;
     }
 
-    if (isNetworkError(objectToNativeError(syncResult))) {
+    if (isRetryableSyncError(syncResult)) {
         const networkRetryAttempt = (syncStorage.networkRetryAttempt ?? 0) + 1;
 
         if (networkRetryAttempt <= MAX_NETWORK_RETRY_ATTEMPTS) {
             syncStorage.networkRetryAttempt = networkRetryAttempt;
+
+            // For a rate-limit, back off until GitHub's reset time (rounded up to whole
+            // minutes, min 1) rather than the fixed network cadence — retrying sooner just
+            // burns another rejected request. Fall back to the network cadence otherwise.
+            const resetMs = getRateLimitResetMs(syncResult);
+            if (resetMs !== null) {
+                const minutesUntilReset = Math.ceil((resetMs - Date.now()) / 60_000);
+                return Math.min(Math.max(minutesUntilReset, 1), MAX_RATE_LIMIT_BACKOFF_MINUTES);
+            }
+
             return networkRetryAttempt * NETWORK_RETRY_DELAY_MINUTES;
         }
     }
