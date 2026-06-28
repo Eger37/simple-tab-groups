@@ -4,7 +4,9 @@ import Vue from 'vue';
 import popup from '../components/popup.vue';
 import editGroup from '../components/edit-group.vue';
 import manageAddonBackup from './manage-addon-backup.vue';
-import githubGist from './github-gist.vue';
+import githubGistAccess from './github-gist-access.vue';
+import githubGistSync from './github-gist-sync.vue';
+import githubGistBackup from './github-gist-backup.vue';
 // import contextMenu from '../components/context-menu.vue';
 import backupLocationDownloads from './backup-location-downloads.vue';
 import backupLocationHost from './backup-location-host.vue';
@@ -209,7 +211,9 @@ export default {
         popup: popup,
         'edit-group': editGroup,
         'manage-addon-backup': manageAddonBackup,
-        'github-gist': githubGist,
+        'github-gist-access': githubGistAccess,
+        'github-gist-sync': githubGistSync,
+        'github-gist-backup': githubGistBackup,
         // 'context-menu': contextMenu,
         'backup-location-downloads': backupLocationDownloads,
         'backup-location-host': backupLocationHost,
@@ -1287,6 +1291,12 @@ export default {
 
         <hr>
 
+        <div id="access-block" class="field">
+            <github-gist-access></github-gist-access>
+        </div>
+
+        <hr>
+
         <div id="sync-block" class="field">
             <div class="field">
                 <label class="checkbox">
@@ -1332,8 +1342,57 @@ export default {
                     </div>
                 </div>
 
-                <github-gist></github-gist>
+                <github-gist-sync></github-gist-sync>
             </template>
+        </div>
+
+        <hr>
+
+        <div id="backup-block" class="field">
+            <github-gist-backup></github-gist-backup>
+
+            <div class="box">
+                <div class="field">
+                    <label class="label" v-text="lang('syncBackupSettingsTitle')"></label>
+                </div>
+
+                <template v-if="IS_WINDOWS">
+                    <div class="field is-horizontal">
+                        <div class="field-label is-normal">
+                            <label class="label colon" v-text="lang('backupLocation')"></label>
+                        </div>
+                        <div class="field-body py-2">
+                            <div class="radios">
+                                <label class="radio">
+                                    <input type="radio" :value="AUTO_BACKUP_LOCATIONS.DOWNLOADS" v-model="options.syncBackupLocation" />
+                                    <span v-text="lang('downloadsFolder')"></span>
+                                </label>
+                                <label class="radio" :disabled="!permissions.nativeMessaging">
+                                    <input type="radio" :value="AUTO_BACKUP_LOCATIONS.HOST" v-model="options.syncBackupLocation" :disabled="!permissions.nativeMessaging" />
+                                    <span v-text="lang('otherFolder')"></span>
+                                </label>
+                                <label class="checkbox">
+                                    <input :checked="permissions.nativeMessaging" @click="setPermissionsNativeMessaging" type="checkbox" />
+                                    <span v-text="lang('allowAccessToNativeMessaging')"></span>
+                                </label>
+                            </div>
+                        </div>
+                    </div>
+
+                    <backup-location-downloads
+                        v-if="options.syncBackupLocation === AUTO_BACKUP_LOCATIONS.DOWNLOADS"
+                        path-key="syncBackupFilePath"
+                        ></backup-location-downloads>
+
+                    <backup-location-host
+                        v-else-if="options.syncBackupLocation === AUTO_BACKUP_LOCATIONS.HOST"
+                        path-key="syncBackupFilePath"
+                        @has="value => hasHost = value"
+                        ></backup-location-host>
+                </template>
+
+                <backup-location-downloads v-else path-key="syncBackupFilePath"></backup-location-downloads>
+            </div>
         </div>
 
         <hr>
