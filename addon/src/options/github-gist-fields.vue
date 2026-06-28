@@ -42,7 +42,7 @@ export default {
         },
         internalGistName: {
             get() {
-                return this.gistName;
+                return this.gistName || '';
             },
             set(value) {
                 this.$emit('update:gistName', value);
