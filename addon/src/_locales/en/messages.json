@@ -1389,17 +1389,29 @@
         "message": "Start synchronization",
         "description": "Start synchronization"
     },
-    "syncStartTrustLocal": {
-        "message": "Start synchronization and trust local data",
-        "description": "Start synchronization and trust local data"
+    "githubGistAccessTitle": {
+        "message": "GitHub Gist access",
+        "description": "Title of the GitHub Gist access settings block (token, file, storage location)"
     },
-    "syncStartTrustCloud": {
-        "message": "Start synchronization and trust cloud data",
-        "description": "Start synchronization and trust cloud data"
+    "githubGistAccessLocation": {
+        "message": "Store cloud settings in",
+        "description": "Label for the selector choosing where the roaming sync option bag is stored (Firefox Sync or local profile)"
     },
-    "syncDataInCloudCanBeDifferent": {
-        "message": "The data in the cloud can be very different from the current state.",
-        "description": "The data in the cloud can be very different from the current state."
+    "githubGistSyncTitle": {
+        "message": "Cloud sync",
+        "description": "Title of the cloud sync settings block"
+    },
+    "githubGistBackupTitle": {
+        "message": "Cloud backup",
+        "description": "Title of the cloud backup settings block"
+    },
+    "createBackupButton": {
+        "message": "Create backup",
+        "description": "Button that pushes the current full state to the cloud as a new gist revision"
+    },
+    "syncBackupSettingsTitle": {
+        "message": "Pre-apply backup before sync",
+        "description": "Label for the pre-apply sync backup location and file path settings"
     },
     "resetSyncStateButton": {
         "message": "Reset sync state",
