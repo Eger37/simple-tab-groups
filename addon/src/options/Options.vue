@@ -270,6 +270,14 @@ export default {
                 return value;
             });
 
+            this.optionsWatch('syncBackupLocation', value => {
+                if (value === this.AUTO_BACKUP_LOCATIONS.HOST) {
+                    this.loadNativeMessagingPermissions();
+                }
+
+                return value;
+            });
+
             this.optionsWatch('browserSettings', async browserSettings => {
                 if (await BrowserSettings.hasPermission()) {
                     const rawSettings = await BrowserSettings.set(browserSettings);
