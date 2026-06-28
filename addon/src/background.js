@@ -52,6 +52,8 @@ import * as Bookmarks from '/js/bookmarks.js';
 import * as Permissions from '/js/permissions.js';
 import * as BrowserSettings from '/js/browser-settings.js';
 import * as Cloud from '/js/sync/cloud/cloud.js?can-do-synchronization';
+import {deltaSynchronization, resetSyncState} from '/js/sync/delta/delta-sync.js';
+import * as DeltaCapture from '/js/sync/delta/delta-capture.js';
 
 const storage = localStorage.create(Constants.MODULES.BACKGROUND);
 
@@ -431,6 +433,8 @@ Listeners.runtime.onMessageExternal.add(async function onMessageExternal(request
 });
 
 self.saveOptions = saveOptions;
+// exposed for the delta-sync pre-apply safety backup (sync/delta/delta-sync.js)
+self.createBackup = createBackup;
 
 const INTERNAL_MODULES = {
     BG: {
@@ -503,6 +507,12 @@ async function onBackgroundMessage(message, sender) {
             ignoreExtForReopenContainer.add(data.id);
             result.ok = true;
             return result;
+
+        case 'reset-cloud-sync-state':
+            // LOCAL-only recovery: clears THIS device's delta-sync state (baseline,
+            // watermarks, event log); the cloud gist is left untouched. The next sync
+            // re-establishes the baseline (empty ⇒ no removals) and re-uploads local.
+            return await resetSyncState();
 
         default: break;
     }
@@ -1155,6 +1165,12 @@ async function saveOptions(_options) {
         await Containers.updateTemporaryContainerTitle(options.temporaryContainerTitle);
     }
 
+    // Delta capture: record the just-persisted synced option keys as `option.set`
+    // deltas so settings roam between machines. This is the single option-save choke
+    // point; the capture layer filters to the synced subset and early-returns while a
+    // sync apply runs (so the transport's own option writes are not re-captured).
+    await DeltaCapture.optionsChanged(optionsToSave);
+
     sendMessageFromBackground('options-updated', {
         keys: optionsKeys,
     });
@@ -1226,8 +1242,8 @@ async function resetAlarm(
     log.stop();
 }
 
-async function createBackup(includeTabFavIcons, includeTabThumbnails, isAutoBackup = false) {
-    const log = logger.start('createBackup', {includeTabFavIcons, includeTabThumbnails, isAutoBackup});
+async function createBackup(includeTabFavIcons, includeTabThumbnails, isAutoBackup = false, filePathOverride = null) {
+    const log = logger.start('createBackup', {includeTabFavIcons, includeTabThumbnails, isAutoBackup, filePathOverride});
 
     const data = await Storage.get();
     const {groups} = await Groups.load(null, true, includeTabFavIcons, includeTabThumbnails);
@@ -1285,6 +1301,25 @@ async function createBackup(includeTabFavIcons, includeTabThumbnails, isAutoBack
     // }
 
     data.containers = Containers.getToExport(data);
+
+    // Sync pre-apply safety backup: same full serialization + non-interactive (no
+    // saveAs dialog) write as an auto-backup, but to the CALLER-SUPPLIED rolling path
+    // (so it overwrites a bounded set of slots and never spams disk) and WITHOUT
+    // touching the auto-backup timestamp/bookmarks side effects. Honors the user's
+    // configured backup location (downloads vs native host).
+    if (filePathOverride) {
+        data.autoBackupFilePath = filePathOverride;
+
+        if (data.autoBackupLocation === Constants.AUTO_BACKUP_LOCATIONS.DOWNLOADS) {
+            await File.saveBackup(data, true);
+        } else {
+            await Host.saveBackup(data);
+        }
+
+        log.stop();
+
+        return true;
+    }
 
     if (isAutoBackup) {
         if (data.autoBackupLocation === Constants.AUTO_BACKUP_LOCATIONS.DOWNLOADS) {
@@ -1547,7 +1582,13 @@ async function cloudSync({
     }));
     clearTimeout(cloudSync.resetTimer);
 
-    const syncResult = await Cloud.synchronization(trust, revision);
+    // P3b: route through the delta pipeline when enabled; the legacy URL-based
+    // synchronization() is retained-but-bypassed (flip Cloud.USE_DELTA_SYNC to revert).
+    // The delta path is full-state sync (no per-revision restore), so a `revision`
+    // restore request still uses the legacy path.
+    const syncResult = (Cloud.USE_DELTA_SYNC && !revision)
+        ? await deltaSynchronization()
+        : await Cloud.synchronization(trust, revision);
 
     actionListeners.forEach(off => off());
 
