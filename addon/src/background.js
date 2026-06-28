@@ -1244,8 +1244,8 @@ async function resetAlarm(
     log.stop();
 }
 
-async function createBackup(includeTabFavIcons, includeTabThumbnails, isAutoBackup = false, filePathOverride = null) {
-    const log = logger.start('createBackup', {includeTabFavIcons, includeTabThumbnails, isAutoBackup, filePathOverride});
+async function createBackup(includeTabFavIcons, includeTabThumbnails, isAutoBackup = false, filePathOverride = null, locationOverride = null) {
+    const log = logger.start('createBackup', {includeTabFavIcons, includeTabThumbnails, isAutoBackup, filePathOverride, locationOverride});
 
     const data = await Storage.get();
     const {groups} = await Groups.load(null, true, includeTabFavIcons, includeTabThumbnails);
@@ -1305,14 +1305,15 @@ async function createBackup(includeTabFavIcons, includeTabThumbnails, isAutoBack
     data.containers = Containers.getToExport(data);
 
     // Sync pre-apply safety backup: same full serialization + non-interactive (no
-    // saveAs dialog) write as an auto-backup, but to the CALLER-SUPPLIED rolling path
-    // (so it overwrites a bounded set of slots and never spams disk) and WITHOUT
-    // touching the auto-backup timestamp/bookmarks side effects. Honors the user's
-    // configured backup location (downloads vs native host).
+    // saveAs dialog) write as an auto-backup, but to the CALLER-SUPPLIED path and
+    // location (the sync-backup settings, independent of the auto-backup ones) and
+    // WITHOUT touching the auto-backup timestamp/bookmarks side effects.
     if (filePathOverride) {
         data.autoBackupFilePath = filePathOverride;
 
-        if (data.autoBackupLocation === Constants.AUTO_BACKUP_LOCATIONS.DOWNLOADS) {
+        const location = locationOverride ?? data.autoBackupLocation;
+
+        if (location === Constants.AUTO_BACKUP_LOCATIONS.DOWNLOADS) {
             await File.saveBackup(data, true);
         } else {
             await Host.saveBackup(data);

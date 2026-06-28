@@ -162,11 +162,13 @@ const PRE_APPLY_BACKUP_SLOTS = 5;
 // CLOUD-localStorage key holding the next slot index to (over)write. Synchronous,
 // survives restarts. A missing/corrupt value restarts from slot 0 (harmless).
 const PRE_APPLY_BACKUP_SLOT_KEY = 'deltaPreApplyBackupSlot';
-// Rolling file path written via STG's existing backup serializer. `{ff-version}` is
-// expanded by File.save's getFilePathVariables(); the trailing `.json` is appended by
-// File.saveBackup. The slot index makes the round-robin set overwrite in place.
-function preApplyBackupFilePath(slot) {
-    return `STG-sync-pre-apply-backups-FF-{ff-version}/STG-sync-pre-apply-backup-${slot}`;
+// Expand the user-configurable `syncBackupFilePath` template's `{slot}` token to the
+// current round-robin slot; the remaining placeholders (`{ff-version}`, dates) are
+// expanded later by File.save's getFilePathVariables() and `.json` appended by
+// File.saveBackup. Keeping `{slot}` in the default template bounds the on-disk set to
+// PRE_APPLY_BACKUP_SLOTS files; a template without it overwrites a single file.
+function preApplyBackupFilePath(template, slot) {
+    return template.replaceAll('{slot}', String(slot));
 }
 
 function lastPushedSeqKey(deviceId) {
@@ -1639,7 +1641,11 @@ async function maybeBackupBeforeApply(plan, log) {
         return; // no-op sync ⇒ nothing to back up
     }
 
-    const {syncBackupBeforeApply} = await Storage.get('syncBackupBeforeApply');
+    const {syncBackupBeforeApply, syncBackupFilePath, syncBackupLocation} = await Storage.get([
+        'syncBackupBeforeApply',
+        'syncBackupFilePath',
+        'syncBackupLocation',
+    ]);
     if (!syncBackupBeforeApply) {
         return; // user opted out
     }
@@ -1650,11 +1656,12 @@ async function maybeBackupBeforeApply(plan, log) {
 
     log.info('pre-apply safety backup', {slot});
 
-    // createBackup(includeTabFavIcons, includeTabThumbnails, isAutoBackup, filePathOverride).
+    // createBackup(includeTabFavIcons, includeTabThumbnails, isAutoBackup, filePathOverride, locationOverride).
     // isAutoBackup=false ⇒ never skipped on empty groups and no autoBackup side effects;
-    // filePathOverride ⇒ non-interactive write to the rolling slot path.
+    // filePathOverride ⇒ non-interactive write to the configured sync-backup path;
+    // locationOverride ⇒ downloads vs native host per syncBackupLocation.
     // Throws on failure → propagates to the caller, which aborts the apply.
-    await backgroundSelf.createBackup(true, false, false, preApplyBackupFilePath(slot));
+    await backgroundSelf.createBackup(true, false, false, preApplyBackupFilePath(syncBackupFilePath, slot), syncBackupLocation);
 
     // advance the slot ONLY after a successful write, so a failed backup re-uses the
     // same slot next time rather than silently skipping ahead.
