@@ -32,14 +32,6 @@ const canDoSynchronization = params.has('can-do-synchronization');
 export const TRUST_LOCAL = 'trust-local';
 export const TRUST_CLOUD = 'trust-cloud';
 
-// Entry-point switch for the live sync path (Phase P3b). When true, the manual Sync
-// button and the auto/retry alarm route through the delta pipeline
-// (`delta-sync.js` deltaSynchronization) instead of the legacy URL-based
-// `synchronization()` below. The legacy code is retained-but-bypassed: flip this to
-// false to revert to the old flow with no other change. There is intentionally no
-// user-facing toggle.
-export const USE_DELTA_SYNC = true;
-
 export const ALARM_NAME = 'cloud';
 export const ALARM_NAME_RETRY = 'cloud-retry';
 export const ERROR_NOTIFICATION_ID = 'cloud-error';

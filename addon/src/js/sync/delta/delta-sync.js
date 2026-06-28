@@ -12,8 +12,8 @@
  * `plan-sync.js`. It deliberately reuses `cloud.js`'s scaffolding rather than
  * duplicating it: the provider factory, the `inProgress` guard, the
  * `send('sync-*')` broadcast, and `CloudError` are all imported from there. The
- * old URL-based `synchronization()` in `cloud.js` is left intact; the manual button
- * and the alarm route here instead (see `cloud.js` `USE_DELTA_SYNC` / background.js).
+ * old URL-based `synchronization()` in `cloud.js` is left intact for explicit Cloud
+ * backup push/restore; the manual button and the alarm route here instead.
  *
  * ## Feedback-loop guard (critical)
  * Applying remote changes must NOT be re-captured by `delta-capture.js` as fresh

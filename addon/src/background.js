@@ -1536,10 +1536,8 @@ async function clearAddon(reloadAddonOnFinish = true) {
 
 async function cloudSync({
         trigger = Cloud.TRIGGER_MANUAL,
-        trust = null,
-        revision = null,
-    }) {
-    const log = logger.start(cloudSync, {trust, trigger, revision: revision?.slice(0, 7) ?? null});
+    } = {}) {
+    const log = logger.start(cloudSync, {trigger});
 
     let shouldResetSyncAlarm = false;
 
@@ -1582,13 +1580,7 @@ async function cloudSync({
     }));
     clearTimeout(cloudSync.resetTimer);
 
-    // P3b: route through the delta pipeline when enabled; the legacy URL-based
-    // synchronization() is retained-but-bypassed (flip Cloud.USE_DELTA_SYNC to revert).
-    // The delta path is full-state sync (no per-revision restore), so a `revision`
-    // restore request still uses the legacy path.
-    const syncResult = (Cloud.USE_DELTA_SYNC && !revision)
-        ? await deltaSynchronization()
-        : await Cloud.synchronization(trust, revision);
+    const syncResult = await deltaSynchronization();
 
     actionListeners.forEach(off => off());
 
