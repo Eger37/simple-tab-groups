@@ -80,7 +80,7 @@ export function send(action, data = {}) {
     CloudBroadcast.send({action, ...data});
 }
 
-export async function synchronization(trust = null, revision = null) {
+export async function synchronization(trust = null, revision = null, {useBackupFile = false} = {}) {
     if (!canDoSynchronization) {
         throw new Error('synchronization is not available in this context');
     }
@@ -107,7 +107,7 @@ export async function synchronization(trust = null, revision = null) {
             lastProgress = progress;
             log.log('progress', progress);
             send('sync-progress', {progress});
-        });
+        }, useBackupFile);
 
         syncResult.ok = true;
         syncResult.progress = 100;
@@ -133,7 +133,7 @@ export async function synchronization(trust = null, revision = null) {
     return syncResult;
 }
 
-async function sync(trust = null, revision = null, progressFunc = null) {
+async function sync(trust = null, revision = null, progressFunc = null, useBackupFile = false) {
     const isRestoring = !!revision;
 
     if (isRestoring) {
@@ -166,8 +166,15 @@ async function sync(trust = null, revision = null, progressFunc = null) {
 
     let cloudInstance;
 
+    // The Cloud backup entry points (cloudBackupPush/cloudBackupRestore) write/read a
+    // dedicated file (githubGistBackupFileName) so their full-state gist never collides
+    // with the delta-sync layout files.
+    const providerOptions = useBackupFile
+        ? {...syncOptions, githubGistFileName: syncOptions.githubGistBackupFileName}
+        : syncOptions;
+
     try {
-        cloudInstance = createCloudProvider(syncProvider, syncOptions);
+        cloudInstance = createCloudProvider(syncProvider, providerOptions);
     } catch (error) {
         const cloudError = new CloudError(error.message, {cause: error});
         storage.lastError = String(cloudError);

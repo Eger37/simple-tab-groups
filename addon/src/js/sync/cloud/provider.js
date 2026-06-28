@@ -48,7 +48,7 @@ export const PROVIDER_GOOGLE_DRIVE = 'google-drive';
  *
  * --- Multi-file (delta-era) methods (Phase P3a) -------------------------------
  * These back the hybrid snapshot + delta layout (one container holding
- * `STG-snapshot.json` + per-device `STG-delta-<deviceId>.json`; see
+ * `STG-sync-snapshot.json` + per-device `STG-sync-delta-<deviceId>.json`; see
  * `.project/DESIGN_DELTA_SYNC.md` and `../delta/layout.js`). They are ADDITIVE:
  * the single-file methods above remain the contract the current `cloud.js` sync
  * flow uses. A multi-file container is located by the presence of the snapshot

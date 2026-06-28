@@ -2,7 +2,7 @@
 import '/js/prefixed-storage.js';
 import * as Constants from '/js/constants.js';
 import * as Utils from '/js/utils.js';
-import {SNAPSHOT_FILE_NAME, DELTA_FILE_PREFIX, LEGACY_BACKUP_FILE_NAME, LOCK_FILE_NAME} from '../delta/layout.js';
+import {SNAPSHOT_FILE_NAME, DELTA_FILE_PREFIX, LOCK_FILE_NAME} from '../delta/layout.js';
 import {canWriteLock, didWinLock, makeLockStamp, LOCK_CONFIRM_DELAY_MS} from '../delta/lock.js';
 
 const storage = localStorage.create(Constants.MODULES.CLOUD);
@@ -215,20 +215,19 @@ export default class GithubGist {
     // -------------------------------------------------------------------------
     // Multi-file (delta-era) API — ADDITIVE. The single-file methods above keep
     // working unchanged for the current sync flow; these handle the new gist
-    // layout (STG-snapshot.json + per-device STG-delta-*.json). The delta gist is
+    // layout (STG-sync-snapshot.json + per-device STG-sync-delta-*.json). The delta gist is
     // located by the presence of the snapshot file rather than `this.#fileName`.
     // See `.project/DESIGN_DELTA_SYNC.md` and ../delta/layout.js.
     // -------------------------------------------------------------------------
 
     // Locate the gist holding the delta layout. Match ANY STG delta-era file
-    // (snapshot, a per-device delta, or the legacy backup) — NOT only the snapshot,
-    // which may not exist yet. Otherwise each device fails to find the shared gist
-    // and creates its own, so the devices never sync with each other.
+    // (snapshot or a per-device delta) — NOT only the snapshot, which may not exist
+    // yet. Otherwise each device fails to find the shared gist and creates its own,
+    // so the devices never sync with each other.
     async #findDeltaGist() {
         this.hasGist || await this.#findGist(name =>
             name === SNAPSHOT_FILE_NAME
             || name.startsWith(DELTA_FILE_PREFIX)
-            || name === LEGACY_BACKUP_FILE_NAME
             // Also match the advisory-lock file: acquireLock runs BEFORE the first pull and may
             // create a gist holding ONLY the lock; without this a later pull would #findGist and
             // miss that gist (no snapshot/delta yet), creating a SECOND gist the devices never

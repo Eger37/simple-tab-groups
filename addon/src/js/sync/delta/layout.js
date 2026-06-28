@@ -4,11 +4,8 @@
  *
  * Single source of truth for the file names the gist holds (see
  * `.project/DESIGN_DELTA_SYNC.md` "Raskladka"/storage layout):
- *   - `STG-snapshot.json`        — the compacted base snapshot.
- *   - `STG-delta-<deviceId>.json` — one append-only delta log per device.
- *   - `STG-backup.json`          — the OLD single-file full-state backup that
- *     existing (pre-delta) users already have; never deleted, used to seed the
- *     first snapshot (see {@link module:sync/delta/seed}).
+ *   - `STG-sync-snapshot.json`        — the compacted base snapshot.
+ *   - `STG-sync-delta-<deviceId>.json` — one append-only delta log per device.
  *
  * ## Purity
  * This module is PURE (literals only, no `browser.*`, no `constants.js` import) so
@@ -20,13 +17,10 @@
  */
 
 /** The compacted base snapshot file. */
-export const SNAPSHOT_FILE_NAME = 'STG-snapshot.json';
+export const SNAPSHOT_FILE_NAME = 'STG-sync-snapshot.json';
 
-/** Filename prefix for per-device delta logs (`STG-delta-<deviceId>.json`). */
-export const DELTA_FILE_PREFIX = 'STG-delta-';
-
-/** The legacy single-file full-state backup that pre-delta users still have. */
-export const LEGACY_BACKUP_FILE_NAME = 'STG-backup.json';
+/** Filename prefix for per-device delta logs (`STG-sync-delta-<deviceId>.json`). */
+export const DELTA_FILE_PREFIX = 'STG-sync-delta-';
 
 /**
  * Advisory distributed-lock file. Holds `{deviceId, expiresAt}` (`expiresAt` is an
@@ -37,13 +31,13 @@ export const LEGACY_BACKUP_FILE_NAME = 'STG-backup.json';
  * (see {@link module:sync/delta/compaction}) is the data-safety backstop. See
  * {@link module:sync/delta/lock}.
  */
-export const LOCK_FILE_NAME = 'STG-lock.json';
+export const LOCK_FILE_NAME = 'STG-sync-lock.json';
 
 /** Common suffix of every layout file. */
 const FILE_SUFFIX = '.json';
 
 /**
- * Build the delta filename for a device id (`STG-delta-<deviceId>.json`).
+ * Build the delta filename for a device id (`STG-sync-delta-<deviceId>.json`).
  * @param {string} deviceId
  * @returns {string}
  */

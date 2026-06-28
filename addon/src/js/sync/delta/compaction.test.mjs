@@ -336,16 +336,16 @@ function buildScenario() {
     // A fully-folded NON-SELF file IS selected for deletion (B: all events <= 4).
     {
         const logs = [
-            {name: 'STG-delta-B.json', deviceId: 'B', events: [ev(1), ev(2), ev(4)]},
+            {name: 'STG-sync-delta-B.json', deviceId: 'B', events: [ev(1), ev(2), ev(4)]},
         ];
         check('orphan-GC: fully-folded non-self file is selected',
-            eq(selectOrphanDeltaFilesToDelete(logs, watermark, 'A'), ['STG-delta-B.json']));
+            eq(selectOrphanDeltaFilesToDelete(logs, watermark, 'A'), ['STG-sync-delta-B.json']));
     }
 
     // A file with ANY unfolded event is NOT selected (C has seq 8 > watermark 7).
     {
         const logs = [
-            {name: 'STG-delta-C.json', deviceId: 'C', events: [ev(6), ev(7), ev(8)]},
+            {name: 'STG-sync-delta-C.json', deviceId: 'C', events: [ev(6), ev(7), ev(8)]},
         ];
         check('orphan-GC: file with an unfolded event is NOT selected',
             eq(selectOrphanDeltaFilesToDelete(logs, watermark, 'A'), []));
@@ -354,7 +354,7 @@ function buildScenario() {
     // The SELF device's file is NEVER selected, even when fully folded.
     {
         const logs = [
-            {name: 'STG-delta-A.json', deviceId: 'A', events: [ev(1), ev(10)]}, // all <= 10
+            {name: 'STG-sync-delta-A.json', deviceId: 'A', events: [ev(1), ev(10)]}, // all <= 10
         ];
         check('orphan-GC: self file is never selected (even fully folded)',
             eq(selectOrphanDeltaFilesToDelete(logs, watermark, 'A'), []));
@@ -363,20 +363,20 @@ function buildScenario() {
     // Mixed batch: select only the fully-folded non-self files; keep self + the unfolded one.
     {
         const logs = [
-            {name: 'STG-delta-A.json', deviceId: 'A', events: [ev(10)]},          // self ⇒ keep
-            {name: 'STG-delta-B.json', deviceId: 'B', events: [ev(2), ev(4)]},    // folded ⇒ delete
-            {name: 'STG-delta-C.json', deviceId: 'C', events: [ev(7), ev(99)]},  // unfolded ⇒ keep
-            {name: 'STG-delta-D.json', deviceId: 'D', events: []},               // empty, wm 0 ⇒ delete
+            {name: 'STG-sync-delta-A.json', deviceId: 'A', events: [ev(10)]},          // self ⇒ keep
+            {name: 'STG-sync-delta-B.json', deviceId: 'B', events: [ev(2), ev(4)]},    // folded ⇒ delete
+            {name: 'STG-sync-delta-C.json', deviceId: 'C', events: [ev(7), ev(99)]},  // unfolded ⇒ keep
+            {name: 'STG-sync-delta-D.json', deviceId: 'D', events: []},               // empty, wm 0 ⇒ delete
         ];
         check('orphan-GC: mixed batch selects only fully-folded non-self files',
-            eq(selectOrphanDeltaFilesToDelete(logs, watermark, 'A'), ['STG-delta-B.json', 'STG-delta-D.json']));
+            eq(selectOrphanDeltaFilesToDelete(logs, watermark, 'A'), ['STG-sync-delta-B.json', 'STG-sync-delta-D.json']));
     }
 
     // Bias to keep: a missing file name or null deviceId is skipped (never deleted).
     {
         const logs = [
             {name: undefined, deviceId: 'B', events: [ev(1)]},
-            {name: 'STG-delta-X.json', deviceId: null, events: [ev(1)]},
+            {name: 'STG-sync-delta-X.json', deviceId: null, events: [ev(1)]},
         ];
         check('orphan-GC: missing name or null deviceId is never selected (bias to keep)',
             eq(selectOrphanDeltaFilesToDelete(logs, watermark, 'A'), []));
@@ -387,7 +387,7 @@ function buildScenario() {
         const wm = {A: 10, B: 4};
         const wmBefore = JSON.stringify(wm);
         selectOrphanDeltaFilesToDelete(
-            [{name: 'STG-delta-B.json', deviceId: 'B', events: [ev(2)]}], wm, 'A',
+            [{name: 'STG-sync-delta-B.json', deviceId: 'B', events: [ev(2)]}], wm, 'A',
         );
         check('orphan-GC: selection does NOT mutate the watermark (entries kept forever)',
             JSON.stringify(wm) === wmBefore);

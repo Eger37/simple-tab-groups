@@ -443,6 +443,7 @@ export const DEFAULT_SYNC_OPTIONS = Object.freeze({
     version: MANIFEST.version,
     githubGistToken: '',
     githubGistFileName: GIT_GIST_FILE_NAME_PARTS.start + 'backup' + GIT_GIST_FILE_NAME_PARTS.end,
+    githubGistBackupFileName: GIT_GIST_FILE_NAME_PARTS.start + 'cloud-backup' + GIT_GIST_FILE_NAME_PARTS.end,
 });
 
 const BROWSER_HAS_FSYNC = [

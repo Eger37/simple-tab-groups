@@ -4,7 +4,7 @@
  *
  * Each install owns a persistent `deviceId` (UUID) plus a human-readable `label`.
  * The id names this device's append-only delta file in the cloud layout
- * (`STG-delta-<deviceId>.json`) and keys per-device watermarks; the label is only
+ * (`STG-sync-delta-<deviceId>.json`) and keys per-device watermarks; the label is only
  * surfaced to the user. See `.project/DESIGN_DELTA_SYNC.md` "Device identity".
  *
  * Generated once on first read and reused thereafter.
