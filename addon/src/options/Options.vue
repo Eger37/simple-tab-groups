@@ -1291,107 +1291,112 @@ export default {
 
         <hr>
 
-        <div id="access-block" class="field">
-            <github-gist-access></github-gist-access>
-        </div>
+        <div id="cloud-block">
+            <label class="label is-medium" v-text="lang('cloudSettingsTitle')"></label>
 
-        <hr>
-
-        <div id="sync-block" class="field">
-            <div class="field">
-                <label class="checkbox">
-                    <input v-model="options.syncEnable" type="checkbox" />
-                    <span v-text="lang('syncEnableTitle')"></span>
-                </label>
+            <div id="access-block" class="field">
+                <github-gist-access></github-gist-access>
             </div>
 
-            <template v-if="options.syncEnable">
+            <div id="sync-block" class="field">
                 <div class="field">
                     <label class="checkbox">
-                        <input v-model="options.syncTabFavIcons" type="checkbox" />
-                        <span v-text="lang('includeTabFavIconsIntoBackup')"></span>
+                        <input v-model="options.syncEnable" type="checkbox" />
+                        <span v-text="lang('syncEnableTitle')"></span>
                     </label>
                 </div>
 
-                <div class="field">
-                    <label class="checkbox">
-                        <input v-model="options.autoSyncEnable" type="checkbox" />
-                        <span v-text="lang('autoSyncEnableTitle')"></span>
-                    </label>
-                </div>
-
-                <div v-if="options.autoSyncEnable" class="field is-horizontal">
-                    <div class="field-label is-normal">
-                        <label class="label colon" v-text="lang('cloudSyncEveryTitle')"></label>
+                <template v-if="options.syncEnable">
+                    <div class="field">
+                        <label class="checkbox">
+                            <input v-model="options.syncTabFavIcons" type="checkbox" />
+                            <span v-text="lang('includeTabFavIconsIntoBackup')"></span>
+                        </label>
                     </div>
-                    <div class="field-body">
-                        <div class="field has-addons">
-                            <div class="control is-expanded">
-                                <input type="number" class="input" v-model.lazy.number="options.syncIntervalValue" min="1" max="50" />
-                            </div>
-                            <div class="control">
-                                <div class="select">
-                                <select v-model="options.syncIntervalKey">
-                                    <option :value="INTERVAL_KEY.minutes" v-text="lang('intervalKeyMinutes')"></option>
-                                    <option :value="INTERVAL_KEY.hours" v-text="lang('intervalKeyHours')"></option>
-                                    <option :value="INTERVAL_KEY.days" v-text="lang('intervalKeyDays')"></option>
-                                </select>
-                            </div>
-                            </div>
-                        </div>
+
+                    <div class="field">
+                        <label class="checkbox">
+                            <input v-model="options.autoSyncEnable" type="checkbox" />
+                            <span v-text="lang('autoSyncEnableTitle')"></span>
+                        </label>
                     </div>
-                </div>
 
-                <github-gist-sync></github-gist-sync>
-            </template>
-        </div>
-
-        <hr>
-
-        <div id="backup-block" class="field">
-            <github-gist-backup></github-gist-backup>
-
-            <div class="box">
-                <div class="field">
-                    <label class="label" v-text="lang('syncBackupSettingsTitle')"></label>
-                </div>
-
-                <template v-if="IS_WINDOWS">
-                    <div class="field is-horizontal">
+                    <div v-if="options.autoSyncEnable" class="field is-horizontal">
                         <div class="field-label is-normal">
-                            <label class="label colon" v-text="lang('backupLocation')"></label>
+                            <label class="label colon" v-text="lang('cloudSyncEveryTitle')"></label>
                         </div>
-                        <div class="field-body py-2">
-                            <div class="radios">
-                                <label class="radio">
-                                    <input type="radio" :value="AUTO_BACKUP_LOCATIONS.DOWNLOADS" v-model="options.syncBackupLocation" />
-                                    <span v-text="lang('downloadsFolder')"></span>
-                                </label>
-                                <label class="radio" :disabled="!permissions.nativeMessaging">
-                                    <input type="radio" :value="AUTO_BACKUP_LOCATIONS.HOST" v-model="options.syncBackupLocation" :disabled="!permissions.nativeMessaging" />
-                                    <span v-text="lang('otherFolder')"></span>
-                                </label>
-                                <label class="checkbox">
-                                    <input :checked="permissions.nativeMessaging" @click="setPermissionsNativeMessaging" type="checkbox" />
-                                    <span v-text="lang('allowAccessToNativeMessaging')"></span>
-                                </label>
+                        <div class="field-body">
+                            <div class="field has-addons">
+                                <div class="control is-expanded">
+                                    <input type="number" class="input" v-model.lazy.number="options.syncIntervalValue" min="1" max="50" />
+                                </div>
+                                <div class="control">
+                                    <div class="select">
+                                    <select v-model="options.syncIntervalKey">
+                                        <option :value="INTERVAL_KEY.minutes" v-text="lang('intervalKeyMinutes')"></option>
+                                        <option :value="INTERVAL_KEY.hours" v-text="lang('intervalKeyHours')"></option>
+                                        <option :value="INTERVAL_KEY.days" v-text="lang('intervalKeyDays')"></option>
+                                    </select>
+                                </div>
+                                </div>
                             </div>
                         </div>
                     </div>
 
-                    <backup-location-downloads
-                        v-if="options.syncBackupLocation === AUTO_BACKUP_LOCATIONS.DOWNLOADS"
-                        path-key="syncBackupFilePath"
-                        ></backup-location-downloads>
+                    <github-gist-sync></github-gist-sync>
 
-                    <backup-location-host
-                        v-else-if="options.syncBackupLocation === AUTO_BACKUP_LOCATIONS.HOST"
-                        path-key="syncBackupFilePath"
-                        @has="value => hasHost = value"
-                        ></backup-location-host>
+                    <div class="box">
+                        <div class="field">
+                            <label class="checkbox">
+                                <input v-model="options.syncBackupBeforeApply" type="checkbox" />
+                                <span v-text="lang('syncBackupBeforeApply')"></span>
+                            </label>
+                        </div>
+
+                        <template v-if="options.syncBackupBeforeApply">
+                            <template v-if="IS_WINDOWS">
+                                <div class="field is-horizontal">
+                                    <div class="field-label is-normal">
+                                        <label class="label colon" v-text="lang('backupLocation')"></label>
+                                    </div>
+                                    <div class="field-body py-2">
+                                        <div class="radios">
+                                            <label class="radio">
+                                                <input type="radio" :value="AUTO_BACKUP_LOCATIONS.DOWNLOADS" v-model="options.syncBackupLocation" />
+                                                <span v-text="lang('downloadsFolder')"></span>
+                                            </label>
+                                            <label class="radio" :disabled="!permissions.nativeMessaging">
+                                                <input type="radio" :value="AUTO_BACKUP_LOCATIONS.HOST" v-model="options.syncBackupLocation" :disabled="!permissions.nativeMessaging" />
+                                                <span v-text="lang('otherFolder')"></span>
+                                            </label>
+                                            <label class="checkbox">
+                                                <input :checked="permissions.nativeMessaging" @click="setPermissionsNativeMessaging" type="checkbox" />
+                                                <span v-text="lang('allowAccessToNativeMessaging')"></span>
+                                            </label>
+                                        </div>
+                                    </div>
+                                </div>
+
+                                <backup-location-downloads
+                                    v-if="options.syncBackupLocation === AUTO_BACKUP_LOCATIONS.DOWNLOADS"
+                                    path-key="syncBackupFilePath"
+                                    ></backup-location-downloads>
+
+                                <backup-location-host
+                                    v-else-if="options.syncBackupLocation === AUTO_BACKUP_LOCATIONS.HOST"
+                                    path-key="syncBackupFilePath"
+                                    @has="value => hasHost = value"
+                                    ></backup-location-host>
+                            </template>
+
+                            <backup-location-downloads v-else path-key="syncBackupFilePath"></backup-location-downloads>
+                        </template>
+                    </div>
                 </template>
+            </div>
 
-                <backup-location-downloads v-else path-key="syncBackupFilePath"></backup-location-downloads>
+            <div id="backup-block" class="field">
+                <github-gist-backup></github-gist-backup>
             </div>
         </div>
 

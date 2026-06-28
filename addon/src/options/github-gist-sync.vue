@@ -17,7 +17,6 @@ export default {
         return {
             confirmResetSyncState: false,
 
-            syncBackupBeforeApply: Constants.DEFAULT_OPTIONS.syncBackupBeforeApply,
             syncSleepNewTabs: Constants.DEFAULT_OPTIONS.syncSleepNewTabs,
             syncSleepPinnedTabs: Constants.DEFAULT_OPTIONS.syncSleepPinnedTabs,
             syncActivatePreviouslyActiveTabs: Constants.DEFAULT_OPTIONS.syncActivatePreviouslyActiveTabs,
@@ -38,9 +37,9 @@ export default {
         this.sync.load();
         this.local.load();
 
-        Storage.get(['syncBackupBeforeApply', 'syncSleepNewTabs', 'syncSleepPinnedTabs', 'syncActivatePreviouslyActiveTabs'])
+        Storage.get(['syncSleepNewTabs', 'syncSleepPinnedTabs', 'syncActivatePreviouslyActiveTabs'])
             .then(values => {
-                ['syncBackupBeforeApply', 'syncSleepNewTabs', 'syncSleepPinnedTabs', 'syncActivatePreviouslyActiveTabs'].forEach(key => {
+                ['syncSleepNewTabs', 'syncSleepPinnedTabs', 'syncActivatePreviouslyActiveTabs'].forEach(key => {
                     this[key] = values[key];
                     this.$watch(key, value => {
                         Storage.set({[key]: value});
@@ -66,15 +65,7 @@ export default {
     <div class="columns is-mobile is-vcentered">
         <div class="column">
             <span class="is-size-5" v-text="lang('githubGistSyncTitle')"></span>
-            <span class="tag is-info ml-2">BETA</span>
         </div>
-    </div>
-
-    <div class="field">
-        <label class="checkbox">
-            <input v-model="syncBackupBeforeApply" type="checkbox" />
-            <span v-text="lang('syncBackupBeforeApply')"></span>
-        </label>
     </div>
 
     <div class="field">

@@ -1369,6 +1369,10 @@
         "message": "Синхронізувати",
         "description": "Start synchronization"
     },
+    "cloudSettingsTitle": {
+        "message": "Хмара",
+        "description": "Title of the section grouping the cloud access, sync and backup settings blocks"
+    },
     "githubGistAccessTitle": {
         "message": "Доступ до GitHub Gist",
         "description": "Title of the GitHub Gist access settings block (token, file, storage location)"
@@ -1388,10 +1392,6 @@
     "createBackupButton": {
         "message": "Створити резервну копію",
         "description": "Button that pushes the current full state to the cloud as a new gist revision"
-    },
-    "syncBackupSettingsTitle": {
-        "message": "Резервна копія перед застосуванням синхронізації",
-        "description": "Label for the pre-apply sync backup location and file path settings"
     },
     "syncEnableTitle": {
         "message": "Увімкнути синхронізацію з хмарою",
