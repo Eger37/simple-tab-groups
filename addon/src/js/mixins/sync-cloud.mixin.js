@@ -70,8 +70,8 @@ export default {
             clearTimeout(this.syncCloudProgressTimer);
             clearTimeout(this.syncCloudInProgressTimer);
         },
-        async syncCloud(trust, revision) {
-            return await this.sendMessageModule('BG.cloudSync', {trust, revision});
+        async syncCloud() {
+            return await this.sendMessageModule('BG.cloudSync');
         },
         syncCloudUpdateInfo() {
             if (storage.lastUpdate) {

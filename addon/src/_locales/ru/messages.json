@@ -1369,17 +1369,29 @@
         "message": "Синхронизировать",
         "description": "Start synchronization"
     },
-    "syncStartTrustLocal": {
-        "message": "Синхронизировать и доверять локальным данным",
-        "description": "Start synchronization and trust local data"
+    "githubGistAccessTitle": {
+        "message": "Доступ к GitHub Gist",
+        "description": "Title of the GitHub Gist access settings block (token, file, storage location)"
     },
-    "syncStartTrustCloud": {
-        "message": "Синхронизировать и доверьтесь облачным данным",
-        "description": "Start synchronization and trust cloud data"
+    "githubGistAccessLocation": {
+        "message": "Хранить настройки облака в",
+        "description": "Label for the selector choosing where the roaming sync option bag is stored (Firefox Sync or local profile)"
     },
-    "syncDataInCloudCanBeDifferent": {
-        "message": "Данные в облаке могут сильно отличаться от текущего состояния.",
-        "description": "The data in the cloud can be very different from the current state."
+    "githubGistSyncTitle": {
+        "message": "Облачная синхронизация",
+        "description": "Title of the cloud sync settings block"
+    },
+    "githubGistBackupTitle": {
+        "message": "Облачная резервная копия",
+        "description": "Title of the cloud backup settings block"
+    },
+    "createBackupButton": {
+        "message": "Создать резервную копию",
+        "description": "Button that pushes the current full state to the cloud as a new gist revision"
+    },
+    "syncBackupSettingsTitle": {
+        "message": "Резервная копия перед применением синхронизации",
+        "description": "Label for the pre-apply sync backup location and file path settings"
     },
     "syncEnableTitle": {
         "message": "Включить синхронизацию с облаком",

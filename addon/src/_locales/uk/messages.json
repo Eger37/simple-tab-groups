@@ -1369,17 +1369,29 @@
         "message": "Синхронізувати",
         "description": "Start synchronization"
     },
-    "syncStartTrustLocal": {
-        "message": "Синхронізувати та довіряти локальним даним",
-        "description": "Start synchronization and trust local data"
+    "githubGistAccessTitle": {
+        "message": "Доступ до GitHub Gist",
+        "description": "Title of the GitHub Gist access settings block (token, file, storage location)"
     },
-    "syncStartTrustCloud": {
-        "message": "Синхронізувати та довіряти хмарним даним",
-        "description": "Start synchronization and trust cloud data"
+    "githubGistAccessLocation": {
+        "message": "Зберігати налаштування хмари в",
+        "description": "Label for the selector choosing where the roaming sync option bag is stored (Firefox Sync or local profile)"
     },
-    "syncDataInCloudCanBeDifferent": {
-        "message": "Дані в хмарі можуть сильно відрізнятися від поточного стану.",
-        "description": "The data in the cloud can be very different from the current state."
+    "githubGistSyncTitle": {
+        "message": "Хмарна синхронізація",
+        "description": "Title of the cloud sync settings block"
+    },
+    "githubGistBackupTitle": {
+        "message": "Хмарна резервна копія",
+        "description": "Title of the cloud backup settings block"
+    },
+    "createBackupButton": {
+        "message": "Створити резервну копію",
+        "description": "Button that pushes the current full state to the cloud as a new gist revision"
+    },
+    "syncBackupSettingsTitle": {
+        "message": "Резервна копія перед застосуванням синхронізації",
+        "description": "Label for the pre-apply sync backup location and file path settings"
     },
     "syncEnableTitle": {
         "message": "Увімкнути синхронізацію з хмарою",

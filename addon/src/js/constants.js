@@ -528,6 +528,8 @@ export const DEFAULT_OPTIONS = Object.freeze({
     // first). Name starts with `sync` ⇒ LOCAL-ONLY (never roams between devices),
     // see sync/delta/option-keys.js LOCAL_ONLY_OPTION_KEY_PREFIXES.
     syncBackupBeforeApply: true,
+    syncBackupLocation: AUTO_BACKUP_LOCATIONS.DOWNLOADS,
+    syncBackupFilePath: 'STG-sync-pre-apply-backups-FF-{ff-version}/STG-sync-pre-apply-backup-{slot}',
     // "Sleep synced GROUP tabs by default" — when true, non-pinned tabs created by a
     // sync apply are created asleep/discarded: they show title+favicon and only load
     // when the user activates them. Default ON. All `sync*` keys are LOCAL-ONLY (never

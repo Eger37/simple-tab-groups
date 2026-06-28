@@ -442,6 +442,8 @@ const INTERNAL_MODULES = {
         restoreBackup,
         clearAddon,
         cloudSync,
+        cloudBackupPush,
+        cloudBackupRestore,
     },
     Tabs,
     Groups,
@@ -1242,8 +1244,8 @@ async function resetAlarm(
     log.stop();
 }
 
-async function createBackup(includeTabFavIcons, includeTabThumbnails, isAutoBackup = false, filePathOverride = null) {
-    const log = logger.start('createBackup', {includeTabFavIcons, includeTabThumbnails, isAutoBackup, filePathOverride});
+async function createBackup(includeTabFavIcons, includeTabThumbnails, isAutoBackup = false, filePathOverride = null, locationOverride = null) {
+    const log = logger.start('createBackup', {includeTabFavIcons, includeTabThumbnails, isAutoBackup, filePathOverride, locationOverride});
 
     const data = await Storage.get();
     const {groups} = await Groups.load(null, true, includeTabFavIcons, includeTabThumbnails);
@@ -1303,14 +1305,15 @@ async function createBackup(includeTabFavIcons, includeTabThumbnails, isAutoBack
     data.containers = Containers.getToExport(data);
 
     // Sync pre-apply safety backup: same full serialization + non-interactive (no
-    // saveAs dialog) write as an auto-backup, but to the CALLER-SUPPLIED rolling path
-    // (so it overwrites a bounded set of slots and never spams disk) and WITHOUT
-    // touching the auto-backup timestamp/bookmarks side effects. Honors the user's
-    // configured backup location (downloads vs native host).
+    // saveAs dialog) write as an auto-backup, but to the CALLER-SUPPLIED path and
+    // location (the sync-backup settings, independent of the auto-backup ones) and
+    // WITHOUT touching the auto-backup timestamp/bookmarks side effects.
     if (filePathOverride) {
         data.autoBackupFilePath = filePathOverride;
 
-        if (data.autoBackupLocation === Constants.AUTO_BACKUP_LOCATIONS.DOWNLOADS) {
+        const location = locationOverride ?? data.autoBackupLocation;
+
+        if (location === Constants.AUTO_BACKUP_LOCATIONS.DOWNLOADS) {
             await File.saveBackup(data, true);
         } else {
             await Host.saveBackup(data);
@@ -1534,21 +1537,7 @@ async function clearAddon(reloadAddonOnFinish = true) {
     }
 }
 
-async function cloudSync({
-        trigger = Cloud.TRIGGER_MANUAL,
-        trust = null,
-        revision = null,
-    }) {
-    const log = logger.start(cloudSync, {trust, trigger, revision: revision?.slice(0, 7) ?? null});
-
-    let shouldResetSyncAlarm = false;
-
-    if (trigger === Cloud.TRIGGER_MANUAL) {
-        const autoSyncLastTimeStamp = (storage.autoSyncLastTimeStamp ?? 0) * 1000;
-        const EXTENSION_START_TIME = await getExtensionStartTime();
-        shouldResetSyncAlarm = autoSyncLastTimeStamp < EXTENSION_START_TIME;
-    }
-
+async function withCloudActionProgress(operation) {
     const syncSuccessColor = 'hsl(153, 53%, 53%)'; // --bulma-success
     const syncDangerColor = 'hsl(348, 100%, 70%)'; // --bulma-danger
 
@@ -1578,19 +1567,31 @@ async function cloudSync({
     actionListeners.add(Cloud.on('sync-end', () => browserActionProgress(100, syncSuccessColor, true)));
     actionListeners.add(Cloud.on('sync-error', ({progress}) => browserActionProgress(progress, syncDangerColor, true)));
     actionListeners.add(Cloud.on('sync-finish', ({ok}) => {
-        cloudSync.resetTimer = setTimeout(() => Browser.actionLoading(false), ok ? 0 : 5_000);
+        withCloudActionProgress.resetTimer = setTimeout(() => Browser.actionLoading(false), ok ? 0 : 5_000);
     }));
-    clearTimeout(cloudSync.resetTimer);
+    clearTimeout(withCloudActionProgress.resetTimer);
 
-    // P3b: route through the delta pipeline when enabled; the legacy URL-based
-    // synchronization() is retained-but-bypassed (flip Cloud.USE_DELTA_SYNC to revert).
-    // The delta path is full-state sync (no per-revision restore), so a `revision`
-    // restore request still uses the legacy path.
-    const syncResult = (Cloud.USE_DELTA_SYNC && !revision)
-        ? await deltaSynchronization()
-        : await Cloud.synchronization(trust, revision);
+    try {
+        return await operation();
+    } finally {
+        actionListeners.forEach(off => off());
+    }
+}
 
-    actionListeners.forEach(off => off());
+async function cloudSync({
+        trigger = Cloud.TRIGGER_MANUAL,
+    } = {}) {
+    const log = logger.start(cloudSync, {trigger});
+
+    let shouldResetSyncAlarm = false;
+
+    if (trigger === Cloud.TRIGGER_MANUAL) {
+        const autoSyncLastTimeStamp = (storage.autoSyncLastTimeStamp ?? 0) * 1000;
+        const EXTENSION_START_TIME = await getExtensionStartTime();
+        shouldResetSyncAlarm = autoSyncLastTimeStamp < EXTENSION_START_TIME;
+    }
+
+    const syncResult = await withCloudActionProgress(deltaSynchronization);
 
     if (syncResult.inProgress) {
         log.stopWarn('sync in progress');
@@ -1627,6 +1628,40 @@ async function cloudSync({
     }
 
     return syncResult;
+}
+
+async function cloudBackup(trust, revision = null) {
+    const log = logger.start('cloudBackup', {trust, revision: revision?.slice(0, 7) ?? null});
+
+    const result = await withCloudActionProgress(() => Cloud.synchronization(trust, revision));
+
+    if (result.inProgress) {
+        log.stopWarn('cloud backup in progress');
+        return result;
+    }
+
+    if (!result.ok && result.langId !== 'githubInvalidToken') {
+        Notification(objectToNativeError(result), {
+            id: Cloud.ERROR_NOTIFICATION_ID,
+            module: ['tabs', 'createUrlOnce', Constants.PAGES.SETTINGS + '#backup/sync'],
+        });
+    }
+
+    if (result.ok) {
+        log.stop(result);
+    } else {
+        log.stopError(result);
+    }
+
+    return result;
+}
+
+function cloudBackupPush() {
+    return cloudBackup(Cloud.TRUST_LOCAL);
+}
+
+function cloudBackupRestore(revision) {
+    return cloudBackup(Cloud.TRUST_CLOUD, revision);
 }
 
 self.sendExternalMessage = sendExternalMessage;
