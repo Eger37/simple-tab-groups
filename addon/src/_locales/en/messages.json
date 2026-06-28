@@ -1401,6 +1401,26 @@
         "message": "Store cloud settings in",
         "description": "Label for the selector choosing where the roaming sync option bag is stored (Firefox Sync or local profile)"
     },
+    "githubGistNameTitle": {
+        "message": "Gist name",
+        "description": "Label for the gist name (the gist description) used to find or create the cloud gist"
+    },
+    "githubGistNameHelp": {
+        "message": "Names the gist used for syncing. The same name on another device connects to the same gist.",
+        "description": "Help text under the gist name field in the GitHub Gist access block"
+    },
+    "githubGistNameChangeWarning": {
+        "message": "Changing the gist name makes __MSG_extensionName__ forget the current gist: it stays on GitHub but is no longer synced. Synchronization restarts from this device's current state.",
+        "description": "Warning shown when the user changes the gist name to a different value"
+    },
+    "githubGistBackupFileNameTitle": {
+        "message": "Backup file name",
+        "description": "Label for the cloud backup file name field"
+    },
+    "githubGistBackupFileNameChangeWarning": {
+        "message": "Changing the backup file name makes __MSG_extensionName__ forget the previous backups: they stay on GitHub but are no longer listed or restored.",
+        "description": "Warning shown when the user changes the cloud backup file name"
+    },
     "githubGistSyncTitle": {
         "message": "Cloud sync",
         "description": "Title of the cloud sync settings block"
