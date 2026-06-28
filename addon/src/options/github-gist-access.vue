@@ -1,5 +1,6 @@
 <script>
 
+import popup from '../components/popup.vue';
 import GithubGistFields from './github-gist-fields.vue';
 
 import '/js/prefixed-storage.js';
@@ -20,16 +21,18 @@ export default {
 
         return {
             errorMessage: '',
+            confirmForgetGistArea: null,
         };
     },
     components: {
+        popup,
         GithubGistFields,
     },
     computed: {
         icon() {
             return this.area === this.sync
-                ? {load: '/icons/cloud-arrow-down-solid.svg', save: '/icons/cloud-arrow-up-solid.svg'}
-                : {load: '/icons/arrow-down.svg', save: '/icons/floppy-disk-solid.svg'};
+                ? {save: '/icons/cloud-arrow-up-solid.svg'}
+                : {save: '/icons/floppy-disk-solid.svg'};
         },
     },
     created() {
@@ -43,12 +46,24 @@ export default {
     },
     methods: {
         lang: Lang,
+        submit(area) {
+            const savedGistName = area.optionsBackup.githubGistName;
+
+            if (savedGistName && area.options.githubGistName !== savedGistName) {
+                this.confirmForgetGistArea = area;
+                return;
+            }
+
+            this.save(area);
+        },
         async save(area) {
+            this.confirmForgetGistArea = null;
+
             try {
                 area.loadingOptions = true;
 
                 if (area.options.githubGistToken) {
-                    await new GithubGist(area.options.githubGistToken, area.options.githubGistFileName).checkToken();
+                    await new GithubGist(area.options.githubGistToken, area.options.githubGistName).checkToken();
                 }
 
                 await area.save();
@@ -128,12 +143,12 @@ export default {
         </div>
     </div>
 
-    <form class="field" @submit.prevent="save(area)" @reset.prevent="area.load">
+    <form class="field" @submit.prevent="submit(area)">
         <fieldset :disabled="area.disabled || area.loadingOptions">
             <github-gist-fields
                 class="field"
                 :token.sync="area.options.githubGistToken"
-                :file-name.sync="area.options.githubGistFileName"
+                :gist-name.sync="area.options.githubGistName"
                 :error-message.sync="errorMessage"
             ></github-gist-fields>
 
@@ -165,16 +180,6 @@ export default {
                 </div>
                 <div class="field is-grouped is-grouped-right is-flex-grow-1">
                     <div class="control">
-                        <button type="reset" class="button is-info is-soft">
-                            <span class="icon">
-                                <figure class="image is-16x16">
-                                    <img :src="icon.load">
-                                </figure>
-                            </span>
-                            <span v-text="lang('load')"></span>
-                        </button>
-                    </div>
-                    <div class="control">
                         <button type="submit" class="button is-success is-soft" :class="{'is-loading': area.loadingOptions}">
                             <span class="icon">
                                 <figure class="image is-16x16">
@@ -188,5 +193,24 @@ export default {
             </div>
         </fieldset>
     </form>
+
+    <popup
+        v-if="confirmForgetGistArea"
+        :title="lang('githubGistNameTitle')"
+        @save="save(confirmForgetGistArea)"
+        @close-popup="confirmForgetGistArea = null"
+        :buttons="
+            [{
+                event: 'save',
+                classList: 'is-success is-soft',
+                lang: 'saveSettings',
+                focused: true,
+            }, {
+                event: 'close-popup',
+                lang: 'cancel',
+            }]
+        ">
+        <span v-text="lang('githubGistNameChangeWarning')"></span>
+    </popup>
 </div>
 </template>

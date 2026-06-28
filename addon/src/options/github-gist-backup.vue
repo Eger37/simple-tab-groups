@@ -14,6 +14,7 @@ export default {
     data() {
         return {
             confirmRestoreBackupItem: null,
+            confirmForgetBackupFileName: false,
             backupInProgress: false,
         };
     },
@@ -36,6 +37,27 @@ export default {
     },
     methods: {
         lang: Lang,
+        submitBackupFileName() {
+            const savedFileName = this.area.optionsBackup.githubGistBackupFileName;
+
+            if (savedFileName && this.area.options.githubGistBackupFileName !== savedFileName) {
+                this.confirmForgetBackupFileName = true;
+                return;
+            }
+
+            this.saveBackupFileName();
+        },
+        async saveBackupFileName() {
+            this.confirmForgetBackupFileName = false;
+
+            try {
+                this.backupInProgress = true;
+                await this.area.save();
+                await this.area.load(false);
+            } finally {
+                this.backupInProgress = false;
+            }
+        },
         async createBackup() {
             try {
                 this.backupInProgress = true;
@@ -61,6 +83,29 @@ export default {
             <span class="tag is-info ml-2">BETA</span>
         </div>
     </div>
+
+    <form class="field is-horizontal" @submit.prevent="submitBackupFileName">
+        <div class="field-label is-normal">
+            <label class="label colon" v-text="lang('githubGistBackupFileNameTitle')"></label>
+        </div>
+        <div class="field-body">
+            <div class="field has-addons">
+                <div class="control is-expanded">
+                    <input required type="text" v-model.trim="area.options.githubGistBackupFileName" maxlength="100" class="input" :disabled="area.disabled || isBusy" />
+                </div>
+                <div class="control">
+                    <button type="submit" class="button is-success is-soft" :class="{'is-loading': backupInProgress}" :disabled="area.disabled || isBusy">
+                        <span class="icon">
+                            <figure class="image is-16x16">
+                                <img src="/icons/floppy-disk-solid.svg">
+                            </figure>
+                        </span>
+                        <span v-text="lang('saveSettings')"></span>
+                    </button>
+                </div>
+            </div>
+        </div>
+    </form>
 
     <div class="columns is-vcentered">
         <div class="column">
@@ -177,6 +222,25 @@ export default {
             </a>
         </div>
         <strong v-text="lang('overwriteCurrent')"></strong>
+    </popup>
+
+    <popup
+        v-if="confirmForgetBackupFileName"
+        :title="lang('githubGistBackupFileNameTitle')"
+        @save="saveBackupFileName"
+        @close-popup="confirmForgetBackupFileName = false"
+        :buttons="
+            [{
+                event: 'save',
+                classList: 'is-success is-soft',
+                lang: 'saveSettings',
+                focused: true,
+            }, {
+                event: 'close-popup',
+                lang: 'cancel',
+            }]
+        ">
+        <span v-text="lang('githubGistBackupFileNameChangeWarning')"></span>
     </popup>
 
 </div>

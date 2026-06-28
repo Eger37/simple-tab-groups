@@ -1381,6 +1381,26 @@
         "message": "Хранить настройки облака в",
         "description": "Label for the selector choosing where the roaming sync option bag is stored (Firefox Sync or local profile)"
     },
+    "githubGistNameTitle": {
+        "message": "Имя Gist",
+        "description": "Label for the gist name (the gist description) used to find or create the cloud gist"
+    },
+    "githubGistNameHelp": {
+        "message": "Задаёт Gist, используемый для синхронизации. То же имя на другом устройстве подключается к тому же Gist.",
+        "description": "Help text under the gist name field in the GitHub Gist access block"
+    },
+    "githubGistNameChangeWarning": {
+        "message": "Изменение имени Gist приведёт к тому, что __MSG_extensionName__ забудет текущий Gist: он останется на GitHub, но больше не будет синхронизироваться. Синхронизация начнётся заново из текущего состояния этого устройства.",
+        "description": "Warning shown when the user changes the gist name to a different value"
+    },
+    "githubGistBackupFileNameTitle": {
+        "message": "Имя файла резервной копии",
+        "description": "Label for the cloud backup file name field"
+    },
+    "githubGistBackupFileNameChangeWarning": {
+        "message": "Изменение имени файла резервной копии приведёт к тому, что __MSG_extensionName__ забудет предыдущие резервные копии: они останутся на GitHub, но больше не будут отображаться и восстанавливаться.",
+        "description": "Warning shown when the user changes the cloud backup file name"
+    },
     "githubGistSyncTitle": {
         "message": "Облачная синхронизация",
         "description": "Title of the cloud sync settings block"
