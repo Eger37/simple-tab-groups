@@ -79,7 +79,7 @@ export default {
             try {
                 area.loadingGist = true;
 
-                const GithubGistCloud = new GithubGist(area.options.githubGistToken, area.options.githubGistFileName);
+                const GithubGistCloud = new GithubGist(area.options.githubGistToken, area.options.githubGistFileName, area.options.githubGistName);
 
                 const gist = await GithubGistCloud.getInfo();
 
@@ -114,7 +114,7 @@ export default {
                             text: gist.owner.login,
                         }, {
                             url: gist.html_url,
-                            text: area.options.githubGistFileName,
+                            text: area.options.githubGistName,
                         },
                     ],
                     lastUpdateAgo: Utils.relativeTime(lastUpdate),

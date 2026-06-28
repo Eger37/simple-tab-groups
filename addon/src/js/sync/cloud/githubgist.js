@@ -2,10 +2,47 @@
 import '/js/prefixed-storage.js';
 import * as Constants from '/js/constants.js';
 import * as Utils from '/js/utils.js';
-import {SNAPSHOT_FILE_NAME, DELTA_FILE_PREFIX, LOCK_FILE_NAME} from '../delta/layout.js';
+import {LOCK_FILE_NAME} from '../delta/layout.js';
 import {canWriteLock, didWinLock, makeLockStamp, LOCK_CONFIRM_DELAY_MS} from '../delta/lock.js';
 
 const storage = localStorage.create(Constants.MODULES.CLOUD);
+
+// Cache of the discovered gist id, keyed by the user-chosen gist NAME (= gist
+// `description`). The gist is identified by its name, but a known id lets discovery
+// fast-path `GET /gists/:id` instead of scanning the user's gist list. Keying by name
+// means renaming the gist uses a different (empty) slot, so a name change cleanly
+// re-discovers/creates rather than reusing the old gist's id. Stored in the synchronous
+// CLOUD localStorage so it survives restarts.
+const GIST_ID_STORAGE_KEY = 'gistIdByName';
+
+function readGistIdMap() {
+    const map = storage[GIST_ID_STORAGE_KEY];
+    return (map && typeof map === 'object') ? map : {};
+}
+
+function getStoredGistId(gistName) {
+    return gistName ? (readGistIdMap()[gistName] ?? null) : null;
+}
+
+function setStoredGistId(gistName, gistId) {
+    if (!gistName || !gistId) {
+        return;
+    }
+    const map = readGistIdMap();
+    map[gistName] = gistId;
+    storage[GIST_ID_STORAGE_KEY] = map;
+}
+
+function clearStoredGistId(gistName) {
+    if (!gistName) {
+        return;
+    }
+    const map = readGistIdMap();
+    if (gistName in map) {
+        delete map[gistName];
+        storage[GIST_ID_STORAGE_KEY] = map;
+    }
+}
 
 // Per-gist persisted ETag for conditional pulls (delta-sync fast path). Stored in the
 // synchronous CLOUD localStorage (same store as `lastUpdate`) so it survives restarts.
@@ -35,6 +72,7 @@ function setStoredEtag(gistId, etag) {
 export default class GithubGist {
     #token = null;
     #fileName = null;
+    #gistName = null;
     #gistId = null;
 
     #perPage = null; // max = 100
@@ -52,17 +90,20 @@ export default class GithubGist {
     // {@link GithubGist#getServerTimeMs} and {@link GithubGist#acquireLock}.
     #lastServerTimeMs = null;
 
-    constructor(token, fileName, perPage = 30) {
+    constructor(token, fileName, gistName = fileName, perPage = 30) {
         if (!token) {
             throw new Error('githubInvalidToken', {cause: {isEmpty: true}});
         } else if (!fileName) {
             throw new Error('githubInvalidFileName');
+        } else if (!gistName) {
+            throw new Error('githubInvalidGistName');
         } else if (perPage < 1 || perPage > 100) {
             throw new Error('githubInvalidPerPage');
         }
 
         this.#token = token;
         this.#fileName = fileName;
+        this.#gistName = gistName;
         this.#perPage = perPage;
     }
 
@@ -101,37 +142,62 @@ export default class GithubGist {
         }
     }
 
-    async #findGist(markerFileName = this.#fileName) {
+    // Resolve "our" private gist by its NAME (= gist `description`). The delta layout files
+    // (STG-sync-*) AND the Cloud backup file (STG-cloud-backup.json) all live in this one
+    // named gist; discovery is by name, while every read/write still targets explicit file
+    // names. Order: (a) fast-path a cached gist id with `GET /gists/:id`; (b) scan the user's
+    // private gists for a matching description; (c) leave `#gistId` null so the next write
+    // creates the gist (see #patchOrCreate, which uses #gistName as the new description).
+    async #findGist() {
         this.#gistId = null;
 
-        const gist = await this.#findGistRecursive(markerFileName);
+        const cachedId = getStoredGistId(this.#gistName);
+
+        if (cachedId) {
+            const gist = await this.#getGistById(cachedId);
+            if (gist) {
+                this.#gistId = gist.id;
+                this.#processInfo(gist);
+                return;
+            }
+            // the cached id no longer resolves to a usable gist (deleted / renamed away) —
+            // drop the stale slot and fall back to a description scan.
+            clearStoredGistId(this.#gistName);
+        }
+
+        const gist = await this.#findGistByName();
 
         if (gist) {
             this.#gistId = gist.id;
+            setStoredGistId(this.#gistName, gist.id);
             this.#processInfo(gist);
         }
     }
 
-    // `matcher` identifies "our" private gist: either an exact file name (string,
-    // the single-file flow keying on `this.#fileName` — unchanged) or a predicate
-    // over file names (the multi-file/delta flow, which matches ANY STG file so two
-    // devices converge on ONE gist even before a snapshot file exists).
-    async #findGistRecursive(matcher, page = 1) {
+    // Fetch a single gist by id, returning it only if it is private and still matches our
+    // name. Returns null on a 404 (deleted) or any error so #findGist can fall back to a scan.
+    async #getGistById(gistId) {
+        try {
+            const gist = await this.#request('GET', `${this.#mainUrl}/${gistId}`);
+            const usable = gist && !gist.public && gist.description === this.#gistName;
+            return usable ? gist : null;
+        } catch {
+            return null;
+        }
+    }
+
+    async #findGistByName(page = 1) {
         const gists = await this.#request('GET', this.#mainUrl, {
             page,
             per_page: this.#perPage,
         });
 
-        const matches = typeof matcher === 'function'
-            ? files => Object.keys(files).some(matcher)
-            : files => Boolean(files[matcher]);
-
-        const gist = gists.find(g => !g.public && matches(g.files));
+        const gist = gists.find(g => !g.public && g.description === this.#gistName);
 
         if (gist) {
             return gist;
         } else if (gists.length === this.#perPage) {
-            return this.#findGistRecursive(matcher, ++page);
+            return this.#findGistByName(++page);
         }
 
         return null;
@@ -174,7 +240,7 @@ export default class GithubGist {
         }
     }
 
-    async setContent(content, description = '', progressFunc = null) {
+    async setContent(content, progressFunc = null) {
         this.hasGist || await this.#findGist();
 
         const files = {
@@ -187,7 +253,7 @@ export default class GithubGist {
         // Capture the write-response ETag (C2) for the next conditional PULL. We do NOT send
         // If-Match here: GitHub does not support conditional requests on unsafe methods (PATCH),
         // and rejects them with a bare 400 — see #patchOrCreate.
-        await this.#patchOrCreate({files}, description, progressSend);
+        await this.#patchOrCreate({files}, progressSend);
 
         // sometimes git make wrong update the field "updated_at" minus 1 second :(
         // thats why we have to get info after update gist
@@ -215,25 +281,14 @@ export default class GithubGist {
     // -------------------------------------------------------------------------
     // Multi-file (delta-era) API — ADDITIVE. The single-file methods above keep
     // working unchanged for the current sync flow; these handle the new gist
-    // layout (STG-sync-snapshot.json + per-device STG-sync-delta-*.json). The delta gist is
-    // located by the presence of the snapshot file rather than `this.#fileName`.
+    // layout (STG-sync-snapshot.json + per-device STG-sync-delta-*.json). Discovery
+    // is by the gist NAME (#findGist), the same gist the single-file flow resolves,
+    // so the delta files and the Cloud backup file share one named gist.
     // See `.project/DESIGN_DELTA_SYNC.md` and ../delta/layout.js.
     // -------------------------------------------------------------------------
 
-    // Locate the gist holding the delta layout. Match ANY STG delta-era file
-    // (snapshot or a per-device delta) — NOT only the snapshot, which may not exist
-    // yet. Otherwise each device fails to find the shared gist and creates its own,
-    // so the devices never sync with each other.
     async #findDeltaGist() {
-        this.hasGist || await this.#findGist(name =>
-            name === SNAPSHOT_FILE_NAME
-            || name.startsWith(DELTA_FILE_PREFIX)
-            // Also match the advisory-lock file: acquireLock runs BEFORE the first pull and may
-            // create a gist holding ONLY the lock; without this a later pull would #findGist and
-            // miss that gist (no snapshot/delta yet), creating a SECOND gist the devices never
-            // converge on. Matching the lock keeps both devices on the one gist.
-            || name === LOCK_FILE_NAME
-        );
+        this.hasGist || await this.#findGist();
     }
 
     /**
@@ -493,11 +548,10 @@ export default class GithubGist {
      * JSON-stringified by the request machinery. Per-device delta files mean
      * concurrent writers touch different files and never clobber each other.
      * @param {Object<string, Object>} contents
-     * @param {string} [description]
      * @param {?function} progressFunc
      * @returns {Promise<Object>} the refreshed gist info (incl. `lastUpdate`).
      */
-    async writeFiles(contents, description = '', progressFunc = null) {
+    async writeFiles(contents, progressFunc = null) {
         await this.#findDeltaGist();
 
         const files = {};
@@ -515,7 +569,7 @@ export default class GithubGist {
         // keys and are never clobbered, so the next compaction simply re-folds them; the sync
         // re-pulls + re-merges every cycle. The write-response ETag is still captured (C2) for
         // the conditional PULL fast path (If-None-Match on GET, which GitHub DOES support).
-        await this.#patchOrCreate({files}, description, progressSend);
+        await this.#patchOrCreate({files}, progressSend);
 
         // refresh info after write (GitHub sometimes back-dates updated_at by 1s)
         return await this.getInfo(undefined, progressGet);
@@ -528,11 +582,10 @@ export default class GithubGist {
      * have advanced between our write and that GET. Sets the gist id on first create.
      *
      * @param {Object} body - the request body (`{files, ...}`).
-     * @param {string} description - gist description (create only).
      * @param {?function} progressSend
      * @returns {Promise<void>}
      */
-    async #patchOrCreate(body, description, progressSend) {
+    async #patchOrCreate(body, progressSend) {
         let response;
 
         if (this.hasGist) {
@@ -540,15 +593,17 @@ export default class GithubGist {
             // bare 400 Bad Request, and the ETag it returns is weak (invalid in If-Match anyway).
             response = await this.#requestRaw('PATCH', this.#gistUrl, body, undefined, progressSend);
         } else {
-            // first write: no gist yet ⇒ unconditional create (nothing to guard against).
+            // first write: no gist yet ⇒ create it with the gist NAME as the `description`, the
+            // value discovery keys on. Cache the new id so later cycles fast-path GET /gists/:id.
             response = await this.#requestRaw('POST', this.#mainUrl, {
                 public: false,
-                description,
+                description: this.#gistName,
                 ...body,
             }, undefined, progressSend);
 
             const gist = await response.clone().json();
             this.#gistId = gist.id;
+            setStoredGistId(this.#gistName, this.#gistId);
         }
 
         // C2: pin the stored conditional-pull marker to the exact revision THIS write produced.
@@ -583,7 +638,7 @@ export default class GithubGist {
             files: {
                 [name]: null,
             },
-        }, '', progressSend);
+        }, progressSend);
 
         return await this.getInfo(undefined, progressGet);
     }

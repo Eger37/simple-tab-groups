@@ -141,10 +141,14 @@ export function createCloudProvider(providerType, syncOptions) {
 
         case PROVIDER_GITHUB_GIST:
         default:
-            // Default/fallback so existing users (and unset option) keep working.
+            // Default/fallback so existing users (and unset option) keep working. The gist is
+            // identified by `githubGistName` (its description); the file name is only the file
+            // this provider reads/writes inside that gist. The delta layout (STG-sync-*) and the
+            // Cloud backup file thus share one named gist, differing only by file name.
             return new GithubGist(
                 syncOptions.githubGistToken,
-                syncOptions.githubGistFileName
+                syncOptions.githubGistFileName,
+                syncOptions.githubGistName
             );
     }
 }
