@@ -63,8 +63,8 @@ const ev = seq => ({seq, op: 'tab.add', uid: `u${seq}`});
 function makeWorld() {
     return {
         cloud: {
-            snapshotWatermark: {[SELF]: 0}, // STG-snapshot.json watermark[self]
-            selfDelta: [],                  // STG-delta-self.json events
+            snapshotWatermark: {[SELF]: 0}, // STG-sync-snapshot.json watermark[self]
+            selfDelta: [],                  // STG-sync-delta-self.json events
         },
         local: {
             log: [],                        // DeltaLog events

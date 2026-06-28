@@ -215,7 +215,7 @@ export default class GithubGist {
     // -------------------------------------------------------------------------
     // Multi-file (delta-era) API — ADDITIVE. The single-file methods above keep
     // working unchanged for the current sync flow; these handle the new gist
-    // layout (STG-snapshot.json + per-device STG-delta-*.json). The delta gist is
+    // layout (STG-sync-snapshot.json + per-device STG-sync-delta-*.json). The delta gist is
     // located by the presence of the snapshot file rather than `this.#fileName`.
     // See `.project/DESIGN_DELTA_SYNC.md` and ../delta/layout.js.
     // -------------------------------------------------------------------------

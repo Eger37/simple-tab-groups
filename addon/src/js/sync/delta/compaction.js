@@ -2,9 +2,9 @@
 /**
  * Pure compaction policy for hybrid snapshot + delta sync (Phase P4).
  *
- * The cloud holds a consolidated BASE snapshot (`STG-snapshot.json`) carrying a
+ * The cloud holds a consolidated BASE snapshot (`STG-sync-snapshot.json`) carrying a
  * `watermark` map `{deviceId: seq}` — the highest delta `seq` from each device ALREADY
- * folded into the base — plus per-device append-only `STG-delta-<id>.json` logs. Replay
+ * folded into the base — plus per-device append-only `STG-sync-delta-<id>.json` logs. Replay
  * (`replay.js`) computes the effective state as `base + every event with seq > watermark`,
  * SKIPPING anything `seq <= watermark[device]` (replay.js dedup, the safety foundation).
  *

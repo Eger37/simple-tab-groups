@@ -355,7 +355,7 @@ export function buildLocalState(loadedGroups, syncedOptions = {}, livePinnedTabs
  * absent, seed from the legacy single-file backup (a pre-delta user's first delta
  * sync); else an empty snapshot. Never throws on "absent" — `readFile` resolves null.
  *
- * `snapshotExists` reports whether the `STG-snapshot.json` FILE was actually present in
+ * `snapshotExists` reports whether the `STG-sync-snapshot.json` FILE was actually present in
  * the gist (true) or had to be synthesized from the legacy backup / empty default (false).
  * The push step uses it to FIRST-CREATE the snapshot when it does not yet exist, even on a
  * cycle that did not compact (see the snapshot-write gate in {@link deltaSynchronization}).
@@ -2174,7 +2174,7 @@ export async function deltaSynchronization() {
         progress(85);
 
         // 8. PUSH. The self delta file is written whenever this device has new events.
-        // The full snapshot (STG-snapshot.json) is the gist-discovery MARKER + the
+        // The full snapshot (STG-sync-snapshot.json) is the gist-discovery MARKER + the
         // consolidated base; it is REWRITTEN ONLY when (a) this cycle COMPACTS, or (b) it
         // does not yet exist (first create). Between compactions a normal sync pushes ONLY
         // this device's delta file — no snapshot rewrite — so idle/steady cycles stop
