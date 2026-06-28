@@ -69,11 +69,9 @@ import {
 import {syncedOptionKeys} from './option-keys.js';
 import {shouldSleepSyncedTab, SLEEP_OPTION_KEYS} from './tab-sleep.js';
 import {isUrlSyncable, unwrapStubUrl, sanitizeFavIconUrl, liveUrlMatchesSource, shouldNavigateLiveTabUrl} from './url-sync.js';
-import {seedSnapshotFromLegacyBackup} from './seed.js';
 import {
     SNAPSHOT_FILE_NAME,
     DELTA_FILE_PREFIX,
-    LEGACY_BACKUP_FILE_NAME,
     deltaFileName,
     deviceIdFromDeltaFileName,
 } from './layout.js';
@@ -351,14 +349,15 @@ export function buildLocalState(loadedGroups, syncedOptions = {}, livePinnedTabs
 }
 
 /**
- * Resolve the base snapshot to plan against: prefer the delta-era snapshot file; if
- * absent, seed from the legacy single-file backup (a pre-delta user's first delta
- * sync); else an empty snapshot. Never throws on "absent" — `readFile` resolves null.
+ * Resolve the base snapshot to plan against: the delta-era snapshot file when it exists,
+ * else an empty snapshot. Never throws on "absent" — `readFile` resolves null. A brand-new
+ * gist starts from the empty snapshot; the first sync then seeds it from the CURRENT LOCAL
+ * app state via the bootstrap step (see {@link gatherLocalPending}/{@link computeBootstrapEvents}).
  *
  * `snapshotExists` reports whether the `STG-sync-snapshot.json` FILE was actually present in
- * the gist (true) or had to be synthesized from the legacy backup / empty default (false).
- * The push step uses it to FIRST-CREATE the snapshot when it does not yet exist, even on a
- * cycle that did not compact (see the snapshot-write gate in {@link deltaSynchronization}).
+ * the gist (true) or had to be synthesized from the empty default (false). The push step
+ * uses it to FIRST-CREATE the snapshot when it does not yet exist, even on a cycle that did
+ * not compact (see the snapshot-write gate in {@link deltaSynchronization}).
  * @param {object} Cloud - provider instance.
  * @returns {Promise<{snapshot: {groups: object[], watermark?: object}, snapshotExists: boolean}>}
  */
@@ -366,12 +365,6 @@ async function resolveBaseSnapshot(Cloud) {
     const snapshot = await Cloud.readFile(SNAPSHOT_FILE_NAME);
     if (snapshot) {
         return {snapshot, snapshotExists: true};
-    }
-
-    const legacy = await Cloud.readFile(LEGACY_BACKUP_FILE_NAME);
-    if (legacy) {
-        logger.info('seeding snapshot from legacy backup');
-        return {snapshot: seedSnapshotFromLegacyBackup(legacy), snapshotExists: false};
     }
 
     return {snapshot: {groups: [], watermark: {}}, snapshotExists: false};
@@ -1938,7 +1931,7 @@ export async function deltaSynchronization() {
             }
         }
 
-        // 1. pull base snapshot (+ legacy seed fallback) and all device delta logs
+        // 1. pull base snapshot (empty default on a brand-new gist) and all device delta logs
         const {snapshot: pulledSnapshot, snapshotExists} = await resolveBaseSnapshot(Cloud);
         progress(30);
         const pulledDeltaLogs = await resolvePulledDeltaLogs(Cloud);

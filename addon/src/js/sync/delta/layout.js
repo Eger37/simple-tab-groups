@@ -6,9 +6,6 @@
  * `.project/DESIGN_DELTA_SYNC.md` "Raskladka"/storage layout):
  *   - `STG-sync-snapshot.json`        — the compacted base snapshot.
  *   - `STG-sync-delta-<deviceId>.json` — one append-only delta log per device.
- *   - `STG-backup.json`          — the OLD single-file full-state backup that
- *     existing (pre-delta) users already have; never deleted, used to seed the
- *     first snapshot (see {@link module:sync/delta/seed}).
  *
  * ## Purity
  * This module is PURE (literals only, no `browser.*`, no `constants.js` import) so
@@ -24,9 +21,6 @@ export const SNAPSHOT_FILE_NAME = 'STG-sync-snapshot.json';
 
 /** Filename prefix for per-device delta logs (`STG-sync-delta-<deviceId>.json`). */
 export const DELTA_FILE_PREFIX = 'STG-sync-delta-';
-
-/** The legacy single-file full-state backup that pre-delta users still have. */
-export const LEGACY_BACKUP_FILE_NAME = 'STG-backup.json';
 
 /**
  * Advisory distributed-lock file. Holds `{deviceId, expiresAt}` (`expiresAt` is an

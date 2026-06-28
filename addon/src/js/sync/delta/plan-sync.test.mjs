@@ -1,5 +1,5 @@
 /**
- * Standalone node test for the pure sync planner + the backward-compat seed (P3a).
+ * Standalone node test for the pure sync planner (P3a).
  *
  * Like replay.test.mjs, this is a plain `node plan-sync.test.mjs` script (STG has no
  * test runner). It imports the pure modules directly (no extension host) and asserts
@@ -11,7 +11,6 @@
  */
 
 import {planSync, computeBootstrapEvents, baselineFromSnapshot} from './plan-sync.js';
-import {seedSnapshotFromLegacyBackup} from './seed.js';
 import {isSyncedOptionKey, syncedOptionKeys} from './option-keys.js';
 
 let passed = 0;
@@ -484,39 +483,6 @@ const REMOTE = 'devRemote';
     const resolved = resolvedSnapshot.groups[0].tabs.find(t => t.uid === 'gp3');
     check('group-pinned: pushed pin flag survives replay',
         resolved?.pinned === true, JSON.stringify(resolved));
-}
-
-// ---------------------------------------------------------------------------
-// 5. backward-compat seed wraps an old backup into { groups, watermark:{} }.
-// ---------------------------------------------------------------------------
-{
-    const legacyBackup = {
-        version: '5.0',
-        groups: [{id: 'g1', title: 'G1', tabs: [{uid: 't1', url: 'http://a'}]}],
-        pinnedTabs: [{uid: 'p1', url: 'http://p1'}, {uid: 'p2', url: 'http://p2'}],
-        someOption: true,
-    };
-    const seed = seedSnapshotFromLegacyBackup(legacyBackup);
-
-    check('seed has groups from the old backup',
-        Array.isArray(seed.groups) && seed.groups.length === 1 && seed.groups[0].id === 'g1', JSON.stringify(seed.groups));
-    check('seed carries legacy data.pinnedTabs into pinnedTabs',
-        Array.isArray(seed.pinnedTabs) && seed.pinnedTabs.length === 2
-            && seed.pinnedTabs[0].uid === 'p1' && seed.pinnedTabs[1].uid === 'p2', JSON.stringify(seed.pinnedTabs));
-    check('seed watermark is empty', seed.watermark && Object.keys(seed.watermark).length === 0, JSON.stringify(seed.watermark));
-    check('seed does not carry over non-group keys', !('someOption' in seed) && !('version' in seed), JSON.stringify(Object.keys(seed)));
-    check('seed does not mutate the input', 'someOption' in legacyBackup, JSON.stringify(legacyBackup));
-    // a seed feeds replay as the base: replaying remote deltas on it loses nothing
-    const {resolvedSnapshot} = planSync({
-        pulledSnapshot: seed,
-        pulledDeltaLogs: [{deviceId: REMOTE, events: [
-            {seq: 1, ts: 100, op: 'tab.add', groupId: 'g1', tab: {uid: 't2', url: 'http://b', index: 1}},
-        ]}],
-        localPendingEvents: [], selfDeviceId: SELF, localState: {groups: seed.groups},
-    });
-    check('seed replays cleanly as a base snapshot',
-        resolvedSnapshot.groups[0].tabs.some(t => t.uid === 't1') && resolvedSnapshot.groups[0].tabs.some(t => t.uid === 't2'),
-        JSON.stringify(resolvedSnapshot.groups[0].tabs.map(t => t.uid)));
 }
 
 // ---------------------------------------------------------------------------
