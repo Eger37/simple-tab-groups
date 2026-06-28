@@ -1633,7 +1633,7 @@ async function cloudSync({
 async function cloudBackup(trust, revision = null) {
     const log = logger.start('cloudBackup', {trust, revision: revision?.slice(0, 7) ?? null});
 
-    const result = await withCloudActionProgress(() => Cloud.synchronization(trust, revision));
+    const result = await withCloudActionProgress(() => Cloud.synchronization(trust, revision, {useBackupFile: true}));
 
     if (result.inProgress) {
         log.stopWarn('cloud backup in progress');
