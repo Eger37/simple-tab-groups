@@ -46,9 +46,12 @@ export const LOCAL_ONLY_OPTION_KEY_PREFIXES = Object.freeze(['sync', 'autoBackup
  *   - `temporaryContainerTitle` — its default is a locale-derived i18n string, so syncing
  *     it would converge two differently-localed machines onto one locale's title (a
  *     cosmetic wart, not a feature). Per-device.
+ *   - `autoSyncEnable` — whether THIS device runs sync on a timer is a per-device choice,
+ *     like `syncEnable`. Its name lacks a `sync`/`autoBackup` prefix, so it is listed here
+ *     explicitly rather than caught by {@link LOCAL_ONLY_OPTION_KEY_PREFIXES}.
  * @readonly
  */
-export const LOCAL_ONLY_OPTION_KEYS = Object.freeze(['temporaryContainerTitle']);
+export const LOCAL_ONLY_OPTION_KEYS = Object.freeze(['temporaryContainerTitle', 'autoSyncEnable']);
 
 /**
  * Does this option key roam through delta sync? True unless its name starts with one
