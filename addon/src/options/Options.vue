@@ -270,6 +270,14 @@ export default {
                 return value;
             });
 
+            this.optionsWatch('syncBackupLocation', value => {
+                if (value === this.AUTO_BACKUP_LOCATIONS.HOST) {
+                    this.loadNativeMessagingPermissions();
+                }
+
+                return value;
+            });
+
             this.optionsWatch('browserSettings', async browserSettings => {
                 if (await BrowserSettings.hasPermission()) {
                     const rawSettings = await BrowserSettings.set(browserSettings);
@@ -333,7 +341,10 @@ export default {
 
         goToBlock(block) {
             const scrollNodeSelector = {
+                cloud: '#cloud-block',
+                access: '#access-block',
                 sync: '#sync-block',
+                backup: '#backup-block',
                 debug: '#debug-block',
             }[block];
 

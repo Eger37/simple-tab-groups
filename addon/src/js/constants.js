@@ -442,6 +442,7 @@ export const GIT_GIST_FILE_NAME_PARTS = Object.freeze({
 export const DEFAULT_SYNC_OPTIONS = Object.freeze({
     version: MANIFEST.version,
     githubGistToken: '',
+    githubGistName: 'Simple Tab Groups',
     githubGistFileName: GIT_GIST_FILE_NAME_PARTS.start + 'backup' + GIT_GIST_FILE_NAME_PARTS.end,
     githubGistBackupFileName: GIT_GIST_FILE_NAME_PARTS.start + 'cloud-backup' + GIT_GIST_FILE_NAME_PARTS.end,
 });

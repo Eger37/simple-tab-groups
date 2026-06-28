@@ -167,8 +167,8 @@ async function sync(trust = null, revision = null, progressFunc = null, useBacku
     let cloudInstance;
 
     // The Cloud backup entry points (cloudBackupPush/cloudBackupRestore) write/read a
-    // dedicated file (githubGistBackupFileName) so their full-state gist never collides
-    // with the delta-sync layout files.
+    // dedicated file (githubGistBackupFileName) inside the SAME named gist (githubGistName
+    // is preserved), so the backup file never collides with the delta-sync layout files.
     const providerOptions = useBackupFile
         ? {...syncOptions, githubGistFileName: syncOptions.githubGistBackupFileName}
         : syncOptions;
@@ -263,8 +263,7 @@ async function sync(trust = null, revision = null, progressFunc = null, useBacku
 
     if (syncResult.changes.cloud) {
         try {
-            const description = Lang('githubGistBackupDescription');
-            cloudInfo = await Cloud.setContent(syncResult.cloudData, description, createCloudProgress(55, 85));
+            cloudInfo = await Cloud.setContent(syncResult.cloudData, createCloudProgress(55, 85));
         } catch (error) {
             const cloudError = new CloudError(error.message, {cause: error});
             storage.lastError = String(cloudError);

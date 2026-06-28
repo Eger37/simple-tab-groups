@@ -5,6 +5,17 @@ import * as Utils from '/js/utils.js';
 import * as SyncStorage from '/js/sync/sync-storage.js';
 import GithubGist from '/js/sync/cloud/githubgist.js';
 
+// The settings page mounts three components that each use this mixin (gist access /
+// sync / backup), and each fetches gist info on `created()`. They render the SAME gist,
+// so a module-level promise cache keyed by token+name collapses those concurrent reads
+// into one `getInfo()` round-trip. A reload after a user action passes `useCache=false`
+// to force a fresh fetch (see `loadGistInfo`).
+const gistInfoPromiseCache = new Map();
+
+function gistInfoCacheKey(area) {
+    return `${area.options.githubGistToken}\0${area.options.githubGistName}`;
+}
+
 export default {
     data() {
         return {
@@ -43,11 +54,11 @@ export default {
         },
     },
     methods: {
-        async loadSyncOptions() {
+        async loadSyncOptions(useCache = true) {
             if (!this.sync.disabled) {
                 Object.assign(this.sync.options, await SyncStorage.get());
                 this.sync.optionsBackup = {...this.sync.options};
-                await this.loadGistInfo(this.sync);
+                await this.loadGistInfo(this.sync, useCache);
             }
         },
 
@@ -55,10 +66,10 @@ export default {
             await SyncStorage.set({...this.sync.options});
         },
 
-        async loadLocalOptions() {
+        async loadLocalOptions(useCache = true) {
             Object.assign(this.local.options, await Storage.get(this.local.options));
             this.local.optionsBackup = {...this.local.options};
-            await this.loadGistInfo(this.local);
+            await this.loadGistInfo(this.local, useCache);
         },
 
         async saveLocalOptions() {
@@ -69,7 +80,27 @@ export default {
             return date.toLocaleString(Utils.UI_LANG, {timeStyle: 'short', ...options});
         },
 
-        async loadGistInfo(area) {
+        fetchGistInfo(area, useCache) {
+            const key = gistInfoCacheKey(area);
+
+            if (useCache && gistInfoPromiseCache.has(key)) {
+                return gistInfoPromiseCache.get(key);
+            }
+
+            const promise = new GithubGist(
+                area.options.githubGistToken,
+                area.options.githubGistFileName,
+                area.options.githubGistName
+            ).getInfo();
+
+            gistInfoPromiseCache.set(key, promise);
+
+            promise.catch(() => gistInfoPromiseCache.delete(key));
+
+            return promise;
+        },
+
+        async loadGistInfo(area, useCache = true) {
             area.gist = null;
 
             if (!area.options.githubGistToken) {
@@ -79,9 +110,7 @@ export default {
             try {
                 area.loadingGist = true;
 
-                const GithubGistCloud = new GithubGist(area.options.githubGistToken, area.options.githubGistFileName);
-
-                const gist = await GithubGistCloud.getInfo();
+                const gist = await this.fetchGistInfo(area, useCache);
 
                 const history = gist.history.map((item, index) => {
                     delete item.user;
@@ -114,7 +143,7 @@ export default {
                             text: gist.owner.login,
                         }, {
                             url: gist.html_url,
-                            text: area.options.githubGistFileName,
+                            text: area.options.githubGistName,
                         },
                     ],
                     lastUpdateAgo: Utils.relativeTime(lastUpdate),
