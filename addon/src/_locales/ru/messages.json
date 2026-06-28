@@ -1382,8 +1382,16 @@
         "description": "The data in the cloud can be very different from the current state."
     },
     "syncEnableTitle": {
-        "message": "Включить автоматическое резервное копирование в облако",
-        "description": "Enable auto backup to the cloud"
+        "message": "Включить синхронизацию с облаком",
+        "description": "Enable sync to the cloud"
+    },
+    "autoSyncEnableTitle": {
+        "message": "Включить автоматическую синхронизацию с облаком",
+        "description": "Enable auto sync to the cloud"
+    },
+    "cloudSyncEveryTitle": {
+        "message": "Синхронизировать с облаком каждые",
+        "description": "Cloud sync every"
     },
     "syncSettingsLocation": {
         "message": "Расположение настроек синхронизации",

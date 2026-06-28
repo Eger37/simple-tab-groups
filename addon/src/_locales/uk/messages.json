@@ -1382,8 +1382,16 @@
         "description": "The data in the cloud can be very different from the current state."
     },
     "syncEnableTitle": {
-        "message": "Увімкнути автоматичне резервне копіювання в хмару",
-        "description": "Enable auto backup to the cloud"
+        "message": "Увімкнути синхронізацію з хмарою",
+        "description": "Enable sync to the cloud"
+    },
+    "autoSyncEnableTitle": {
+        "message": "Увімкнути автоматичну синхронізацію з хмарою",
+        "description": "Enable auto sync to the cloud"
+    },
+    "cloudSyncEveryTitle": {
+        "message": "Синхронізувати з хмарою кожні",
+        "description": "Cloud sync every"
     },
     "syncSettingsLocation": {
         "message": "Розташування налаштувань синхронізації",

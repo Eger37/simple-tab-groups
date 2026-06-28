@@ -1157,7 +1157,7 @@ async function saveOptions(_options) {
         await resetLocalBackupAlarm();
     }
 
-    if (optionsKeys.some(key => ['syncEnable', 'syncOptionsLocation', 'syncIntervalKey', 'syncIntervalValue'].includes(key))) {
+    if (optionsKeys.some(key => ['syncEnable', 'autoSyncEnable', 'syncOptionsLocation', 'syncIntervalKey', 'syncIntervalValue'].includes(key))) {
         await resetSyncAlarm();
     }
 
@@ -1193,7 +1193,7 @@ async function resetLocalBackupAlarm() {
 async function resetSyncAlarm(useCurrentTimeAsLastRun = false) {
     await resetAlarm(
         Cloud.ALARM_NAME,
-        options.syncEnable,
+        options.syncEnable && options.autoSyncEnable,
         options.syncIntervalKey,
         options.syncIntervalValue,
         useCurrentTimeAsLastRun ? undefined : storage.autoSyncLastTimeStamp
