@@ -442,6 +442,8 @@ const INTERNAL_MODULES = {
         restoreBackup,
         clearAddon,
         cloudSync,
+        cloudBackupPush,
+        cloudBackupRestore,
     },
     Tabs,
     Groups,
@@ -1534,19 +1536,7 @@ async function clearAddon(reloadAddonOnFinish = true) {
     }
 }
 
-async function cloudSync({
-        trigger = Cloud.TRIGGER_MANUAL,
-    } = {}) {
-    const log = logger.start(cloudSync, {trigger});
-
-    let shouldResetSyncAlarm = false;
-
-    if (trigger === Cloud.TRIGGER_MANUAL) {
-        const autoSyncLastTimeStamp = (storage.autoSyncLastTimeStamp ?? 0) * 1000;
-        const EXTENSION_START_TIME = await getExtensionStartTime();
-        shouldResetSyncAlarm = autoSyncLastTimeStamp < EXTENSION_START_TIME;
-    }
-
+async function withCloudActionProgress(operation) {
     const syncSuccessColor = 'hsl(153, 53%, 53%)'; // --bulma-success
     const syncDangerColor = 'hsl(348, 100%, 70%)'; // --bulma-danger
 
@@ -1576,13 +1566,31 @@ async function cloudSync({
     actionListeners.add(Cloud.on('sync-end', () => browserActionProgress(100, syncSuccessColor, true)));
     actionListeners.add(Cloud.on('sync-error', ({progress}) => browserActionProgress(progress, syncDangerColor, true)));
     actionListeners.add(Cloud.on('sync-finish', ({ok}) => {
-        cloudSync.resetTimer = setTimeout(() => Browser.actionLoading(false), ok ? 0 : 5_000);
+        withCloudActionProgress.resetTimer = setTimeout(() => Browser.actionLoading(false), ok ? 0 : 5_000);
     }));
-    clearTimeout(cloudSync.resetTimer);
+    clearTimeout(withCloudActionProgress.resetTimer);
 
-    const syncResult = await deltaSynchronization();
+    try {
+        return await operation();
+    } finally {
+        actionListeners.forEach(off => off());
+    }
+}
 
-    actionListeners.forEach(off => off());
+async function cloudSync({
+        trigger = Cloud.TRIGGER_MANUAL,
+    } = {}) {
+    const log = logger.start(cloudSync, {trigger});
+
+    let shouldResetSyncAlarm = false;
+
+    if (trigger === Cloud.TRIGGER_MANUAL) {
+        const autoSyncLastTimeStamp = (storage.autoSyncLastTimeStamp ?? 0) * 1000;
+        const EXTENSION_START_TIME = await getExtensionStartTime();
+        shouldResetSyncAlarm = autoSyncLastTimeStamp < EXTENSION_START_TIME;
+    }
+
+    const syncResult = await withCloudActionProgress(deltaSynchronization);
 
     if (syncResult.inProgress) {
         log.stopWarn('sync in progress');
@@ -1619,6 +1627,40 @@ async function cloudSync({
     }
 
     return syncResult;
+}
+
+async function cloudBackup(trust, revision = null) {
+    const log = logger.start('cloudBackup', {trust, revision: revision?.slice(0, 7) ?? null});
+
+    const result = await withCloudActionProgress(() => Cloud.synchronization(trust, revision));
+
+    if (result.inProgress) {
+        log.stopWarn('cloud backup in progress');
+        return result;
+    }
+
+    if (!result.ok && result.langId !== 'githubInvalidToken') {
+        Notification(objectToNativeError(result), {
+            id: Cloud.ERROR_NOTIFICATION_ID,
+            module: ['tabs', 'createUrlOnce', Constants.PAGES.SETTINGS + '#backup/sync'],
+        });
+    }
+
+    if (result.ok) {
+        log.stop(result);
+    } else {
+        log.stopError(result);
+    }
+
+    return result;
+}
+
+function cloudBackupPush() {
+    return cloudBackup(Cloud.TRUST_LOCAL);
+}
+
+function cloudBackupRestore(revision) {
+    return cloudBackup(Cloud.TRUST_CLOUD, revision);
 }
 
 self.sendExternalMessage = sendExternalMessage;
