@@ -1303,9 +1303,16 @@ export default {
                     </label>
                 </div>
 
-                <div class="field is-horizontal">
+                <div class="field">
+                    <label class="checkbox">
+                        <input v-model="options.autoSyncEnable" type="checkbox" />
+                        <span v-text="lang('autoSyncEnableTitle')"></span>
+                    </label>
+                </div>
+
+                <div v-if="options.autoSyncEnable" class="field is-horizontal">
                     <div class="field-label is-normal">
-                        <label class="label colon" v-text="lang('autoBackupCreateEveryTitle')"></label>
+                        <label class="label colon" v-text="lang('cloudSyncEveryTitle')"></label>
                     </div>
                     <div class="field-body">
                         <div class="field has-addons">

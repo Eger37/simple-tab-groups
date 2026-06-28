@@ -516,6 +516,7 @@ export const DEFAULT_OPTIONS = Object.freeze({
     autoBackupIncludeTabFavIcons: true,
 
     syncEnable: true,
+    autoSyncEnable: false,
     syncProvider: 'github-gist', // local (per-device) option, see PROVIDER_* in sync/cloud/provider.js
     syncOptionsLocation: IS_AVAILABLE_SYNC_STORAGE ? SYNC_STORAGE_FSYNC : SYNC_STORAGE_LOCAL,
     syncLastUpdate: "1970-01-01T00:00:00Z",

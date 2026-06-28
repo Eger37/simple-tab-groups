@@ -1410,8 +1410,16 @@
         "description": "Confirmation text for the reset sync state action"
     },
     "syncEnableTitle": {
-        "message": "Enable auto backup to the cloud",
-        "description": "Enable auto backup to the cloud"
+        "message": "Enable sync to the cloud",
+        "description": "Enable sync to the cloud"
+    },
+    "autoSyncEnableTitle": {
+        "message": "Enable auto sync to the cloud",
+        "description": "Enable auto sync to the cloud"
+    },
+    "cloudSyncEveryTitle": {
+        "message": "Cloud sync every",
+        "description": "Cloud sync every"
     },
     "syncBackupBeforeApply": {
         "message": "Create a backup before applying sync changes (recommended)",
