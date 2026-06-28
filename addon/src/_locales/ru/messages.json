@@ -1369,6 +1369,10 @@
         "message": "Синхронизировать",
         "description": "Start synchronization"
     },
+    "cloudSettingsTitle": {
+        "message": "Облако",
+        "description": "Title of the section grouping the cloud access, sync and backup settings blocks"
+    },
     "githubGistAccessTitle": {
         "message": "Доступ к GitHub Gist",
         "description": "Title of the GitHub Gist access settings block (token, file, storage location)"
@@ -1388,10 +1392,6 @@
     "createBackupButton": {
         "message": "Создать резервную копию",
         "description": "Button that pushes the current full state to the cloud as a new gist revision"
-    },
-    "syncBackupSettingsTitle": {
-        "message": "Резервная копия перед применением синхронизации",
-        "description": "Label for the pre-apply sync backup location and file path settings"
     },
     "syncEnableTitle": {
         "message": "Включить синхронизацию с облаком",

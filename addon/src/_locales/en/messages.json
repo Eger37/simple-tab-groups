@@ -1389,6 +1389,10 @@
         "message": "Start synchronization",
         "description": "Start synchronization"
     },
+    "cloudSettingsTitle": {
+        "message": "Cloud",
+        "description": "Title of the section grouping the cloud access, sync and backup settings blocks"
+    },
     "githubGistAccessTitle": {
         "message": "GitHub Gist access",
         "description": "Title of the GitHub Gist access settings block (token, file, storage location)"
@@ -1408,10 +1412,6 @@
     "createBackupButton": {
         "message": "Create backup",
         "description": "Button that pushes the current full state to the cloud as a new gist revision"
-    },
-    "syncBackupSettingsTitle": {
-        "message": "Pre-apply backup before sync",
-        "description": "Label for the pre-apply sync backup location and file path settings"
     },
     "resetSyncStateButton": {
         "message": "Reset sync state",
