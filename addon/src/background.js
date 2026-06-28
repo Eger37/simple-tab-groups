@@ -1643,7 +1643,7 @@ async function cloudBackup(trust, revision = null) {
     if (!result.ok && result.langId !== 'githubInvalidToken') {
         Notification(objectToNativeError(result), {
             id: Cloud.ERROR_NOTIFICATION_ID,
-            module: ['tabs', 'createUrlOnce', Constants.PAGES.SETTINGS + '#backup/sync'],
+            module: ['tabs', 'createUrlOnce', Constants.PAGES.SETTINGS + '#backup/backup'],
         });
     }
 

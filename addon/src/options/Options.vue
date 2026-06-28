@@ -341,7 +341,10 @@ export default {
 
         goToBlock(block) {
             const scrollNodeSelector = {
+                cloud: '#cloud-block',
+                access: '#access-block',
                 sync: '#sync-block',
+                backup: '#backup-block',
                 debug: '#debug-block',
             }[block];
 
