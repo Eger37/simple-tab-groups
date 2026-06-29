@@ -1310,53 +1310,54 @@ export default {
             </div>
 
             <div id="sync-block" class="field">
-                <div class="field">
-                    <label class="checkbox">
-                        <input v-model="options.syncEnable" type="checkbox" />
-                        <span v-text="lang('syncEnableTitle')"></span>
-                    </label>
-                </div>
-
-                <template v-if="options.syncEnable">
-                    <div class="field">
-                        <label class="checkbox">
-                            <input v-model="options.syncTabFavIcons" type="checkbox" />
-                            <span v-text="lang('includeTabFavIconsIntoBackup')"></span>
-                        </label>
-                    </div>
-
-                    <div class="field">
-                        <label class="checkbox">
-                            <input v-model="options.autoSyncEnable" type="checkbox" />
-                            <span v-text="lang('autoSyncEnableTitle')"></span>
-                        </label>
-                    </div>
-
-                    <div v-if="options.autoSyncEnable" class="field is-horizontal">
-                        <div class="field-label is-normal">
-                            <label class="label colon" v-text="lang('cloudSyncEveryTitle')"></label>
+                <div class="box">
+                    <div class="columns is-mobile is-vcentered">
+                        <div class="column">
+                            <span class="is-size-5" v-text="lang('githubGistSyncTitle')"></span>
                         </div>
-                        <div class="field-body">
-                            <div class="field has-addons">
-                                <div class="control is-expanded">
-                                    <input type="number" class="input" v-model.lazy.number="options.syncIntervalValue" min="1" max="50" />
-                                </div>
-                                <div class="control">
-                                    <div class="select">
-                                    <select v-model="options.syncIntervalKey">
-                                        <option :value="INTERVAL_KEY.minutes" v-text="lang('intervalKeyMinutes')"></option>
-                                        <option :value="INTERVAL_KEY.hours" v-text="lang('intervalKeyHours')"></option>
-                                        <option :value="INTERVAL_KEY.days" v-text="lang('intervalKeyDays')"></option>
-                                    </select>
-                                </div>
+                    </div>
+
+                    <div class="field">
+                        <label class="checkbox">
+                            <input v-model="options.syncEnable" type="checkbox" />
+                            <span v-text="lang('syncEnableTitle')"></span>
+                        </label>
+                    </div>
+
+                    <template v-if="options.syncEnable">
+                        <div class="field">
+                            <label class="checkbox">
+                                <input v-model="options.autoSyncEnable" type="checkbox" />
+                                <span v-text="lang('autoSyncEnableTitle')"></span>
+                            </label>
+                        </div>
+
+                        <div v-if="options.autoSyncEnable" class="field is-horizontal">
+                            <div class="field-label is-normal">
+                                <label class="label colon" v-text="lang('cloudSyncEveryTitle')"></label>
+                            </div>
+                            <div class="field-body">
+                                <div class="field has-addons">
+                                    <div class="control is-expanded">
+                                        <input type="number" class="input" v-model.lazy.number="options.syncIntervalValue" min="1" max="50" />
+                                    </div>
+                                    <div class="control">
+                                        <div class="select">
+                                        <select v-model="options.syncIntervalKey">
+                                            <option :value="INTERVAL_KEY.minutes" v-text="lang('intervalKeyMinutes')"></option>
+                                            <option :value="INTERVAL_KEY.hours" v-text="lang('intervalKeyHours')"></option>
+                                            <option :value="INTERVAL_KEY.days" v-text="lang('intervalKeyDays')"></option>
+                                        </select>
+                                    </div>
+                                    </div>
                                 </div>
                             </div>
                         </div>
-                    </div>
 
-                    <github-gist-sync></github-gist-sync>
+                        <github-gist-sync></github-gist-sync>
 
-                    <div class="box">
+                        <hr>
+
                         <div class="field">
                             <label class="checkbox">
                                 <input v-model="options.syncBackupBeforeApply" type="checkbox" />
@@ -1402,8 +1403,8 @@ export default {
 
                             <backup-location-downloads v-else path-key="syncBackupFilePath"></backup-location-downloads>
                         </template>
-                    </div>
-                </template>
+                    </template>
+                </div>
             </div>
 
             <div id="backup-block" class="field">
