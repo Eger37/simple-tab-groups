@@ -282,11 +282,10 @@ export function buildLocalState(loadedGroups, syncedOptions = {}, livePinnedTabs
                 // shuffle tab order on the receiving side. See replay.js for the contract.
                 index,
                 lastModified: tab.lastModified,
-                // KEEP the CURRENT favicon (incl. small data:) so the synced/sleeping tab
-                // shows its icon. Read live here, so the compaction snapshot always carries
-                // the tab's current favicon — this is the propagation path for a favicon that
-                // changed without a title/url change (no favicon-only event exists). One
-                // favicon per tab ⇒ no bloat. sanitizeFavIconUrl drops only a >~50 KB blob.
+                // Carry only a small URL favicon reference: sanitizeFavIconUrl DROPS inline
+                // data: favicons (they caused the multi-GB bloat) and oversized URLs. Read live
+                // here so the compaction snapshot carries the tab's current favicon reference —
+                // the propagation path for a favicon that changed without a title/url change.
                 favIconUrl: sanitizeFavIconUrl(tab.favIconUrl),
                 // group-scoped pin flag (pinned within an active group). Mirrors the
                 // delta-capture record field; only present when true so it round-trips
@@ -333,9 +332,8 @@ export function buildLocalState(loadedGroups, syncedOptions = {}, livePinnedTabs
             // the pinned-relative position; fall back to array order if it's not finite.
             index: Number.isFinite(tab.index) ? tab.index : index,
             lastModified: tab.lastModified,
-            // KEEP the favicon (incl. small data:) so the synced pinned tab shows its icon.
-            // The snapshot holds ONE favicon per tab (bounded by tab count), so this can't
-            // bloat. sanitizeFavIconUrl only drops a >~50 KB blob ⇒ undefined ⇒ field omitted.
+            // sanitizeFavIconUrl DROPS inline data: favicons (they caused the multi-GB bloat)
+            // and oversized URLs; only a small URL reference is kept ⇒ undefined ⇒ field omitted.
             favIconUrl: sanitizeFavIconUrl(tab.favIconUrl),
             // source loaded-state (see grouped tabs above): pinned tabs are usually loaded,
             // but we record the live signal so `syncActivatePreviouslyActiveTabs` can honor
@@ -1345,8 +1343,8 @@ async function buildLiveTabRecordByUid() {
  *    tab at CREATE time). So we update STG's cached title via {@link Cache.setTab}, which is
  *    what STG's UI / a discarded tab's display reads.
  *  - `favIconUrl` is likewise a session/cache field: {@link Cache.setTabFavIcon} (which, as
- *    on the create path, persists `data:` favicons to sessions and updates the in-memory
- *    cache). Non-`data:` favicons refresh from the live page on load, same as create.
+ *    on the create path, persists the favicon reference to sessions and updates the in-memory
+ *    cache). The favicon refreshes from the live page on load, same as create.
  *  - `url`: settable live, but we MUST NOT force-load a discarded/unloaded tab. So for a
  *    discarded tab we update the cached url only (mirrors how STG stores an unloaded tab's
  *    url; it navigates there when the user wakes it); a loaded tab is navigated via

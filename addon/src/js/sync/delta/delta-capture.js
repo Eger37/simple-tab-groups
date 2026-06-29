@@ -271,11 +271,10 @@ function buildTabRecord(tab, uid, groupRelativeIndex, snapshot = null) {
         url: unwrapStubUrl(tab.url),
         title: tab.title,
         cookieStoreId: tab.cookieStoreId,
-        // KEEP the favicon (incl. small `data:` PNGs) so the synced/sleeping tab shows its
-        // icon. sanitizeFavIconUrl only drops a PATHOLOGICALLY large favicon (>~50 KB). The
-        // favicon is just a field that RIDES ALONG in this record (written for a real url/
-        // title change); there is no favicon-only event, so it can never be duplicated across
-        // hundreds of thousands of events again (the 5 GB bloat). undefined ⇒ field omitted.
+        // sanitizeFavIconUrl DROPS inline `data:` favicons (they caused the multi-GB bloat) and
+        // any oversized URL; only a small http(s)/moz-extension reference is kept. The favicon
+        // is just a field that RIDES ALONG in this record (written for a real url/title change);
+        // there is no favicon-only event. undefined ⇒ field omitted.
         // A4: prefer the live tab favicon, fall back to the snapshot taken at the call site.
         favIconUrl: sanitizeFavIconUrl(tab.favIconUrl ?? snapshot?.favIconUrl),
         // A4: prefer the snapshot's lastModified (pinned at the call site, after the bump);
@@ -605,8 +604,8 @@ function buildPinnedRecord(tab, uid, snapshot = null) {
         url: unwrapStubUrl(tab.url),
         title: tab.title,
         cookieStoreId: tab.cookieStoreId,
-        // see buildTabRecord: KEEP the favicon (incl. small data:); only a >~50 KB blob is
-        // dropped. Bloat is bounded by the emit throttle + latest-wins snapshot.
+        // see buildTabRecord: sanitizeFavIconUrl DROPS inline data: favicons and oversized
+        // URLs, keeping only a small http(s)/moz-extension reference.
         // A4: prefer the live tab favicon, fall back to the call-site snapshot.
         favIconUrl: sanitizeFavIconUrl(tab.favIconUrl ?? snapshot?.favIconUrl),
         // A4: prefer the snapshot's lastModified (pinned at the call site), else live cache.
