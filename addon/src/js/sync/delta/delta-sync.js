@@ -1721,9 +1721,7 @@ async function gatherLocalPending(selfDeviceId, log) {
     }
 
     const bootstrapEvents = computeBootstrapEvents(localState, priorBaseline, logUids, logGroupIds, logOptionKeys);
-    for (const payload of bootstrapEvents) {
-        await DeltaLog.append(payload.op, payload);
-    }
+    await DeltaLog.appendMany(bootstrapEvents);
     if (bootstrapEvents.length) {
         log.info('bootstrap-uploaded never-synced local items', {count: bootstrapEvents.length});
     }
