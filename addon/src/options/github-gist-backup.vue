@@ -3,7 +3,9 @@
 import popup from '../components/popup.vue';
 
 import '/js/prefixed-storage.js';
+import * as Constants from '/js/constants.js';
 import Lang from '/js/lang.js';
+import * as Storage from '/js/storage.js';
 
 import syncAreaMixin from '/js/mixins/sync-area.mixin.js';
 import syncCloudMixin from '/js/mixins/sync-cloud.mixin.js';
@@ -16,6 +18,8 @@ export default {
             confirmRestoreBackupItem: null,
             confirmForgetBackupFileName: false,
             backupInProgress: false,
+
+            syncTabFavIcons: Constants.DEFAULT_OPTIONS.syncTabFavIcons,
         };
     },
     components: {
@@ -32,6 +36,11 @@ export default {
     created() {
         this.sync.load();
         this.local.load();
+
+        Storage.get('syncTabFavIcons').then(({syncTabFavIcons}) => {
+            this.syncTabFavIcons = syncTabFavIcons;
+            this.$watch('syncTabFavIcons', value => Storage.set({syncTabFavIcons: value}));
+        });
 
         this.$on('sync-finish', () => this.area.load(false));
     },
@@ -106,6 +115,13 @@ export default {
             </div>
         </div>
     </form>
+
+    <div class="field">
+        <label class="checkbox">
+            <input v-model="syncTabFavIcons" type="checkbox" />
+            <span v-text="lang('includeTabFavIconsIntoBackup')"></span>
+        </label>
+    </div>
 
     <div class="columns is-vcentered">
         <div class="column">
