@@ -301,6 +301,65 @@ async function freshLog(initial = {}) {
     check('a later first touch retries after a failed hydration', e?.seq === 1, `e=${JSON.stringify(e)}`);
 }
 
+// --- 7. appendMany: one persist for a batch, sequential seqs ----------------------
+{
+    const {mock, mod} = await freshLog();
+
+    const batch = [
+        {op: mod.OPS.GROUP_ADD, group: {id: 1, title: 'g1'}},
+        {op: 'bogus.op', group: {id: 99, title: 'skip'}},
+        {op: mod.OPS.TAB_ADD, groupId: 1, tab: {uid: 'x', url: 'https://a', title: 'A'}},
+        {op: mod.OPS.GROUP_ADD, group: {id: 2, title: 'g2'}},
+    ];
+    const validCount = 3;
+
+    const p = mod.appendMany(batch);
+    await Promise.resolve();
+    await Promise.resolve();
+    mock.releaseGets();
+    const appended = await p;
+
+    check('appendMany skips invalid ops but keeps the valid ones',
+        appended.length === validCount, `len=${appended.length}`);
+    check('appendMany persists the whole batch in ONE set', mock.setCallCount === 1,
+        `setCallCount=${mock.setCallCount}`);
+
+    const batchSeqs = appended.map(e => e.seq);
+    check('appendMany assigns sequential seqs from 1 with no gaps',
+        batchSeqs.every((s, i) => s === i + 1), `seqs=${JSON.stringify(batchSeqs)}`);
+    check('appendMany preserves each item op', appended[0].op === mod.OPS.GROUP_ADD
+        && appended[1].op === mod.OPS.TAB_ADD && appended[2].op === mod.OPS.GROUP_ADD,
+        JSON.stringify(appended.map(e => e.op)));
+
+    const all = await mod.getEvents();
+    check('appendMany stored exactly the valid events', all.length === validCount,
+        `len=${all.length}`);
+
+    const e = await mod.append(mod.OPS.GROUP_ADD, {group: {id: 3, title: 'g3'}});
+    check('a single append after appendMany continues monotonically',
+        e.seq === validCount + 1, `seq=${e.seq}`);
+}
+
+// --- 8. appendMany([]) is a no-op: no persist ------------------------------------
+{
+    const {mock, mod} = await freshLog();
+
+    const pRead = mod.getEvents();
+    await Promise.resolve();
+    await Promise.resolve();
+    mock.releaseGets();
+    await pRead;
+
+    check('appendMany on an empty store issues no set during hydration',
+        mock.setCallCount === 0, `setCallCount=${mock.setCallCount}`);
+
+    const result = await mod.appendMany([]);
+    check('appendMany([]) returns an empty array', Array.isArray(result) && result.length === 0,
+        JSON.stringify(result));
+    check('appendMany([]) issues no set', mock.setCallCount === 0,
+        `setCallCount=${mock.setCallCount}`);
+}
+
 // ---------------------------------------------------------------------------
 console.log(`\n${passed} passed, ${failures.length} failed`);
 if (failures.length) {

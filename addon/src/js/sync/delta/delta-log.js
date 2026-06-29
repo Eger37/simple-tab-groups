@@ -230,6 +230,46 @@ export async function append(op, payload = {}) {
 }
 
 /**
+ * Append many events in one batch, persisting only once. Each item is shaped
+ * `{op, ...payload}`. Items with an unknown op are logged and skipped (the rest
+ * of the batch still proceeds). Persists once if at least one event was appended.
+ *
+ * @param {object[]} items - each `{op, ...payload}` (see {@link OPS}).
+ * @returns {Promise<object[]>} the appended events, in order.
+ */
+export async function appendMany(items) {
+    if (!Array.isArray(items) || items.length === 0) {
+        return [];
+    }
+
+    await ensureLoaded();
+
+    const appended = [];
+
+    for (const item of items) {
+        if (!VALID_OPS.has(item.op)) {
+            logger.error('appendMany: unknown op', item.op);
+            continue;
+        }
+
+        const event = {
+            ...item,
+            seq: ++lastSeq,
+            ts: Utils.unixNowMs(),
+        };
+
+        events.push(event);
+        appended.push(event);
+    }
+
+    if (appended.length) {
+        await persist();
+    }
+
+    return appended;
+}
+
+/**
  * Returns a shallow copy of all events currently in this device's log.
  * @returns {Promise<object[]>}
  */
