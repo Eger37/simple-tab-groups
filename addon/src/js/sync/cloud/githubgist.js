@@ -7,12 +7,6 @@ import {canWriteLock, didWinLock, makeLockStamp, LOCK_CONFIRM_DELAY_MS} from '..
 
 const storage = localStorage.create(Constants.MODULES.CLOUD);
 
-// Cache of the discovered gist id, keyed by the user-chosen gist NAME (= gist
-// `description`). The gist is identified by its name, but a known id lets discovery
-// fast-path `GET /gists/:id` instead of scanning the user's gist list. Keying by name
-// means renaming the gist uses a different (empty) slot, so a name change cleanly
-// re-discovers/creates rather than reusing the old gist's id. Stored in the synchronous
-// CLOUD localStorage so it survives restarts.
 const GIST_ID_STORAGE_KEY = 'gistIdByName';
 
 function readGistIdMap() {
@@ -142,12 +136,6 @@ export default class GithubGist {
         }
     }
 
-    // Resolve "our" private gist by its NAME (= gist `description`). The delta layout files
-    // (STG-sync-*) AND the Cloud backup file (STG-cloud-backup.json) all live in this one
-    // named gist; discovery is by name, while every read/write still targets explicit file
-    // names. Order: (a) fast-path a cached gist id with `GET /gists/:id`; (b) scan the user's
-    // private gists for a matching description; (c) leave `#gistId` null so the next write
-    // creates the gist (see #patchOrCreate, which uses #gistName as the new description).
     async #findGist() {
         this.#gistId = null;
 
@@ -160,8 +148,6 @@ export default class GithubGist {
                 this.#processInfo(gist);
                 return;
             }
-            // the cached id no longer resolves to a usable gist (deleted / renamed away) —
-            // drop the stale slot and fall back to a description scan.
             clearStoredGistId(this.#gistName);
         }
 
@@ -174,8 +160,6 @@ export default class GithubGist {
         }
     }
 
-    // Fetch a single gist by id, returning it only if it is private and still matches our
-    // name. Returns null on a 404 (deleted) or any error so #findGist can fall back to a scan.
     async #getGistById(gistId) {
         try {
             const gist = await this.#request('GET', `${this.#mainUrl}/${gistId}`);
@@ -228,7 +212,13 @@ export default class GithubGist {
 
             const gist = await this.getInfo(revision, progressApiFunc);
 
-            const content = await this.#readFileContent(gist.files[this.#fileName], progressRawFunc);
+            const file = gist.files[this.#fileName];
+
+            if (!file) {
+                throw new Error('githubGistFileNotInRevision');
+            }
+
+            const content = await this.#readFileContent(file, progressRawFunc);
 
             return withInfo ? [content, gist] : content;
         } catch (e) {
@@ -593,8 +583,6 @@ export default class GithubGist {
             // bare 400 Bad Request, and the ETag it returns is weak (invalid in If-Match anyway).
             response = await this.#requestRaw('PATCH', this.#gistUrl, body, undefined, progressSend);
         } else {
-            // first write: no gist yet ⇒ create it with the gist NAME as the `description`, the
-            // value discovery keys on. Cache the new id so later cycles fast-path GET /gists/:id.
             response = await this.#requestRaw('POST', this.#mainUrl, {
                 public: false,
                 description: this.#gistName,

@@ -16,6 +16,9 @@
  * @module sync/delta/layout
  */
 
+/** Reserved filename prefix owned by the delta-sync layout; the Cloud backup file must not use it. */
+export const RESERVED_FILE_PREFIX = 'STG-sync-';
+
 /** The compacted base snapshot file. */
 export const SNAPSHOT_FILE_NAME = 'STG-sync-snapshot.json';
 
@@ -55,4 +58,13 @@ export function deviceIdFromDeltaFileName(fileName) {
         return null;
     }
     return fileName.slice(DELTA_FILE_PREFIX.length, -FILE_SUFFIX.length) || null;
+}
+
+/**
+ * Whether a filename collides with the reserved delta-sync namespace.
+ * @param {string} fileName
+ * @returns {boolean}
+ */
+export function isReservedFileName(fileName) {
+    return typeof fileName === 'string' && fileName.startsWith(RESERVED_FILE_PREFIX);
 }

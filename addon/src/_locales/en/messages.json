@@ -1507,6 +1507,18 @@
         "message": "GitHub Gist backup has incorrect data",
         "description": "GitHub Gist backup has incorrect data"
     },
+    "githubGistFileNotInRevision": {
+        "message": "The backup file is not present in this revision.",
+        "description": "The selected gist revision does not contain the cloud backup file"
+    },
+    "githubGistBackupFileNameInvalid": {
+        "message": "Enter a file name ending in .json that does not start with «STG-sync-» (that prefix is reserved for cloud sync).",
+        "description": "Cloud backup file name is empty, not .json, or uses the reserved STG-sync- prefix"
+    },
+    "githubBackupFileNameReserved": {
+        "message": "The cloud backup file name must not start with «STG-sync-»; that prefix is reserved for cloud sync files.",
+        "description": "Backup push refused because the file name collides with the reserved sync namespace"
+    },
     "githubInvalidToken": {
         "message": "Your GitHub token is invalid",
         "description": "Your GitHub token is invalid"
