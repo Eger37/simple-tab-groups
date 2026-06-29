@@ -1463,6 +1463,14 @@
         "message": "Резервная копия GitHub Gist содержит неверные данные",
         "description": "GitHub Gist backup has incorrect data"
     },
+    "githubGistBackupFileNameInvalid": {
+        "message": "Укажите имя файла, оканчивающееся на .json и не начинающееся с «STG-sync-» (этот префикс зарезервирован для облачной синхронизации).",
+        "description": "Cloud backup file name is empty, not .json, or uses the reserved STG-sync- prefix"
+    },
+    "githubBackupFileNameReserved": {
+        "message": "Имя файла облачной резервной копии не должно начинаться с «STG-sync-»; этот префикс зарезервирован для файлов облачной синхронизации.",
+        "description": "Backup push refused because the file name collides with the reserved sync namespace"
+    },
     "githubInvalidToken": {
         "message": "Ваш токен GitHub недействителен",
         "description": "Your GitHub token is invalid"

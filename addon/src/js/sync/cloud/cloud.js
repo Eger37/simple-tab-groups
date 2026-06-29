@@ -12,6 +12,7 @@ import Logger, {nativeErrorToObject, objectToNativeError} from '/js/logger.js';
 import {createCloudProvider} from './provider.js';
 import * as CloudBroadcast from '/js/broadcast.js?channel=cloud';
 import * as SyncStorage from '../sync-storage.js';
+import {isReservedFileName} from '../delta/layout.js';
 import * as Storage from '/js/storage.js';
 import Migration from '/js/migration.js';
 import backgroundSelf from '/js/background.js';
@@ -169,6 +170,12 @@ async function sync(trust = null, revision = null, progressFunc = null, useBacku
     // The Cloud backup entry points (cloudBackupPush/cloudBackupRestore) write/read a
     // dedicated file (githubGistBackupFileName) inside the SAME named gist (githubGistName
     // is preserved), so the backup file never collides with the delta-sync layout files.
+    if (useBackupFile && isReservedFileName(syncOptions.githubGistBackupFileName)) {
+        const error = new CloudError('githubBackupFileNameReserved');
+        storage.lastError = String(error);
+        log.throwError('reserved backup file name', error);
+    }
+
     const providerOptions = useBackupFile
         ? {...syncOptions, githubGistFileName: syncOptions.githubGistBackupFileName}
         : syncOptions;

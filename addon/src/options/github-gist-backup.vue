@@ -6,6 +6,7 @@ import '/js/prefixed-storage.js';
 import * as Constants from '/js/constants.js';
 import Lang from '/js/lang.js';
 import * as Storage from '/js/storage.js';
+import {isReservedFileName} from '/js/sync/delta/layout.js';
 
 import syncAreaMixin from '/js/mixins/sync-area.mixin.js';
 import syncCloudMixin from '/js/mixins/sync-cloud.mixin.js';
@@ -32,6 +33,14 @@ export default {
         canBackup() {
             return !this.isBusy && !this.area.disabled && !this.area.loadingGist && !!this.area.options.githubGistToken;
         },
+        backupFileName() {
+            return this.area.options.githubGistBackupFileName || '';
+        },
+        isValidBackupFileName() {
+            return this.backupFileName.endsWith('.json')
+                && this.backupFileName.length > '.json'.length
+                && !isReservedFileName(this.backupFileName);
+        },
     },
     created() {
         this.sync.load();
@@ -47,6 +56,10 @@ export default {
     methods: {
         lang: Lang,
         submitBackupFileName() {
+            if (!this.isValidBackupFileName) {
+                return;
+            }
+
             const savedFileName = this.area.optionsBackup.githubGistBackupFileName;
 
             if (savedFileName && this.area.options.githubGistBackupFileName !== savedFileName) {
@@ -98,20 +111,28 @@ export default {
             <label class="label colon" v-text="lang('githubGistBackupFileNameTitle')"></label>
         </div>
         <div class="field-body">
-            <div class="field has-addons">
-                <div class="control is-expanded">
-                    <input required type="text" v-model.trim="area.options.githubGistBackupFileName" maxlength="100" class="input" :disabled="area.disabled || isBusy" />
-                </div>
-                <div class="control">
-                    <button type="submit" class="button is-success is-soft" :class="{'is-loading': backupInProgress}" :disabled="area.disabled || isBusy">
-                        <span class="icon">
+            <div class="field">
+                <div class="field has-addons">
+                    <div class="control is-expanded" :class="{'has-icons-right': !isValidBackupFileName}">
+                        <input required type="text" v-model.trim="area.options.githubGistBackupFileName" maxlength="100" class="input" :disabled="area.disabled || isBusy" />
+                        <span v-if="!isValidBackupFileName" class="icon is-right">
                             <figure class="image is-16x16">
-                                <img src="/icons/floppy-disk-solid.svg">
+                                <img src="/icons/close.svg" />
                             </figure>
                         </span>
-                        <span v-text="lang('saveSettings')"></span>
-                    </button>
+                    </div>
+                    <div class="control">
+                        <button type="submit" class="button is-success is-soft" :class="{'is-loading': backupInProgress}" :disabled="area.disabled || isBusy || !isValidBackupFileName">
+                            <span class="icon">
+                                <figure class="image is-16x16">
+                                    <img src="/icons/floppy-disk-solid.svg">
+                                </figure>
+                            </span>
+                            <span v-text="lang('saveSettings')"></span>
+                        </button>
+                    </div>
                 </div>
+                <p v-if="!isValidBackupFileName" class="help has-text-danger" v-text="lang('githubGistBackupFileNameInvalid')"></p>
             </div>
         </div>
     </form>
