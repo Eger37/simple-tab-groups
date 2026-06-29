@@ -228,7 +228,13 @@ export default class GithubGist {
 
             const gist = await this.getInfo(revision, progressApiFunc);
 
-            const content = await this.#readFileContent(gist.files[this.#fileName], progressRawFunc);
+            const file = gist.files[this.#fileName];
+
+            if (!file) {
+                throw new Error('githubGistFileNotInRevision');
+            }
+
+            const content = await this.#readFileContent(file, progressRawFunc);
 
             return withInfo ? [content, gist] : content;
         } catch (e) {

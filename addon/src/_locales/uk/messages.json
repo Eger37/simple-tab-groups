@@ -1463,6 +1463,10 @@
         "message": "Резервна копія GitHub Gist містить некоректні дані",
         "description": "GitHub Gist backup has incorrect data"
     },
+    "githubGistFileNotInRevision": {
+        "message": "У цій ревізії немає файлу резервної копії.",
+        "description": "The selected gist revision does not contain the cloud backup file"
+    },
     "githubGistBackupFileNameInvalid": {
         "message": "Вкажіть ім'я файлу, що закінчується на .json і не починається з «STG-sync-» (цей префікс зарезервовано для хмарної синхронізації).",
         "description": "Cloud backup file name is empty, not .json, or uses the reserved STG-sync- prefix"
