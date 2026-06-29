@@ -139,14 +139,8 @@ export default {
             </div>
         </div>
     </div>
-    <div class="field error-message">
+    <div v-if="errorMessage" class="field error-message">
         <p class="has-text-danger has-text-right white-space-pre-line" v-text="errorMessage"></p>
     </div>
 </div>
 </template>
-
-<style scoped>
-.error-message {
-    min-height: 1.5em;
-}
-</style>
