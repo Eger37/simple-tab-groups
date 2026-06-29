@@ -47,7 +47,7 @@ function buildLocalState(loadedGroups, syncedOptions = {}, livePinnedTabs = []) 
                 // (browser-window-absolute), which would shuffle order across machines.
                 index,
                 lastModified: tab.lastModified,
-                // KEEP the current favicon (incl. small data:); only a >~50 KB blob is dropped.
+                // sanitizeFavIconUrl drops inline data: favicons and oversized URLs.
                 favIconUrl: sanitizeFavIconUrl(tab.favIconUrl),
                 id: tab.id,
             }));
@@ -259,24 +259,24 @@ async function getLivePinnedTabs(rawPinnedTabs, {cache, isSyncable, unwrap}) {
     check('pinned un-uided tab dropped', !localState.pinnedTabs.some(t => t.id === 92));
     check('pinned live id kept', localState.pinnedTabs[0].id === 91);
 
-    // a normal data: favicon on a pinned tab is KEPT in the snapshot (so the synced tab shows
-    // its icon); only a pathologically large (>~50 KB) one is dropped.
+    // an inline data: favicon on a pinned tab is DROPPED from the snapshot (it caused the
+    // multi-GB bloat); a small URL reference is kept and an oversized URL is dropped.
     const dataFavicon = 'data:image/png;base64,' + 'A'.repeat(2000);
-    const hugeFavicon = 'data:image/png;base64,' + 'A'.repeat(60000);
+    const hugeFavicon = 'https://h/favicon.ico?' + 'A'.repeat(60000);
     const stWithFavicon = buildLocalState([], {}, [
         {id: 93, uid: 'pinFav', url: 'https://f', title: 'F', index: 0, favIconUrl: dataFavicon},
         {id: 94, uid: 'pinHttp', url: 'https://g', title: 'G', index: 1, favIconUrl: 'https://g/favicon.ico'},
         {id: 95, uid: 'pinHuge', url: 'https://h', title: 'H', index: 2, favIconUrl: hugeFavicon},
     ]);
-    check('pinned normal data: favicon KEPT in snapshot', stWithFavicon.pinnedTabs[0].favIconUrl === dataFavicon);
+    check('pinned data: favicon dropped from snapshot', stWithFavicon.pinnedTabs[0].favIconUrl === undefined);
     check('pinned normal favicon preserved', stWithFavicon.pinnedTabs[1].favIconUrl === 'https://g/favicon.ico');
     check('pinned pathological favicon dropped from snapshot', stWithFavicon.pinnedTabs[2].favIconUrl === undefined);
 
-    // grouped tabs also carry their current favicon in the snapshot (read live).
+    // grouped tabs also carry their current favicon URL reference in the snapshot (read live).
     const stGrouped = buildLocalState([
-        {id: 'gf', title: 'GF', tabs: [{id: 50, uid: 'gtab', url: 'https://x', title: 'X', index: 0, favIconUrl: dataFavicon}]},
+        {id: 'gf', title: 'GF', tabs: [{id: 50, uid: 'gtab', url: 'https://x', title: 'X', index: 0, favIconUrl: 'https://x/favicon.ico'}]},
     ]);
-    check('grouped tab favicon KEPT in snapshot', stGrouped.groups[0].tabs[0].favIconUrl === dataFavicon);
+    check('grouped tab favicon kept in snapshot', stGrouped.groups[0].tabs[0].favIconUrl === 'https://x/favicon.ico');
 
     const pulledSnapshot = {groups: [], pinnedTabs: [], watermark: {}};
     const plan = planSync({

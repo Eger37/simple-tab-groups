@@ -5,9 +5,9 @@
  * `tabs.js` are impure (browser-dependent), so — as the other delta tests do — the PURE
  * contracts under test are re-implemented here from the same source and asserted:
  *
- *   1. Favicons are KEPT in tab/pinned records (incl. small `data:` ones) so every synced/
- *      sleeping tab shows an icon. Only a PATHOLOGICALLY large favicon (>~50 KB) is dropped
- *      — that is the only bound on a single favicon string.
+ *   1. Inline `data:` favicons are DROPPED from tab/pinned records (they caused the multi-GB
+ *      `syncDeltaLog` bloat). Only small URL references (http(s)/moz-extension) are kept; an
+ *      oversized URL reference (>~50 KB) is also dropped. The live page re-fetches the icon.
  *
  *   2. A favicon-ONLY `onUpdated` change emits NO delta event. The tabs.js gate that decides
  *      whether to emit a tab.modify / pinned.modify fires only on a title (or url) change. A
@@ -66,27 +66,27 @@ function wouldEmitDelta(changeInfo) {
 }
 
 const NORMAL_DATA_FAVICON = 'data:image/png;base64,iVBORw0KGgoAAAANSU' + 'A'.repeat(2000);
-const HUGE_DATA_FAVICON = 'data:image/png;base64,' + 'A'.repeat(MAX_SYNCABLE_FAVICON_LENGTH + 1);
+const HUGE_URL_FAVICON = 'https://a/favicon.ico?' + 'A'.repeat(MAX_SYNCABLE_FAVICON_LENGTH + 1);
 
-// --- 1. records KEEP favicons (incl. small data:), drop only pathological --------
+// --- 1. records DROP inline data: favicons, keep small URL refs, drop oversized URLs --------
 {
     const groupTab = buildTabRecord({uid: 'u1', url: 'https://a', title: 'A', favIconUrl: NORMAL_DATA_FAVICON});
-    check('buildTabRecord KEEPS normal data: favicon', groupTab.favIconUrl === NORMAL_DATA_FAVICON);
+    check('buildTabRecord DROPS data: favicon', groupTab.favIconUrl === undefined);
 
     const groupTabHttp = buildTabRecord({uid: 'u2', url: 'https://a', title: 'A', favIconUrl: 'https://a/favicon.ico'});
     check('buildTabRecord keeps remote favicon', groupTabHttp.favIconUrl === 'https://a/favicon.ico');
 
-    const groupTabHuge = buildTabRecord({uid: 'u3', url: 'https://a', title: 'A', favIconUrl: HUGE_DATA_FAVICON});
-    check('buildTabRecord drops pathological (>50KB) favicon', groupTabHuge.favIconUrl === undefined);
+    const groupTabHuge = buildTabRecord({uid: 'u3', url: 'https://a', title: 'A', favIconUrl: HUGE_URL_FAVICON});
+    check('buildTabRecord drops pathological (>50KB) url favicon', groupTabHuge.favIconUrl === undefined);
 
     const pinned = buildPinnedRecord({uid: 'p1', url: 'https://b', title: 'B', favIconUrl: NORMAL_DATA_FAVICON});
-    check('buildPinnedRecord KEEPS normal data: favicon', pinned.favIconUrl === NORMAL_DATA_FAVICON);
+    check('buildPinnedRecord DROPS data: favicon', pinned.favIconUrl === undefined);
 
     const pinnedHttp = buildPinnedRecord({uid: 'p2', url: 'https://b', title: 'B', favIconUrl: 'https://b/favicon.ico'});
     check('buildPinnedRecord keeps remote favicon', pinnedHttp.favIconUrl === 'https://b/favicon.ico');
 
-    const pinnedHuge = buildPinnedRecord({uid: 'p3', url: 'https://b', title: 'B', favIconUrl: HUGE_DATA_FAVICON});
-    check('buildPinnedRecord drops pathological favicon', pinnedHuge.favIconUrl === undefined);
+    const pinnedHuge = buildPinnedRecord({uid: 'p3', url: 'https://b', title: 'B', favIconUrl: HUGE_URL_FAVICON});
+    check('buildPinnedRecord drops pathological url favicon', pinnedHuge.favIconUrl === undefined);
 }
 
 // --- 2. a favicon-only change does NOT produce a delta event -----------------
@@ -105,9 +105,9 @@ const HUGE_DATA_FAVICON = 'data:image/png;base64,' + 'A'.repeat(MAX_SYNCABLE_FAV
 {
     // a tab.add / tab.modify (built when url/title changes) carries the tab's CURRENT favicon
     // as a plain field — so the favicon propagates without any favicon-specific event.
-    const liveTab = {uid: 'u9', url: 'https://gmail.com', title: 'Inbox (3)', favIconUrl: NORMAL_DATA_FAVICON};
+    const liveTab = {uid: 'u9', url: 'https://gmail.com', title: 'Inbox (3)', favIconUrl: 'https://gmail.com/favicon.ico'};
     const rec = buildTabRecord(liveTab);
-    check('tab.modify record carries the current favicon', rec.favIconUrl === NORMAL_DATA_FAVICON);
+    check('tab.modify record carries the current favicon', rec.favIconUrl === 'https://gmail.com/favicon.ico');
 
     // the favicon appears as exactly ONE field of the latest record — never its own event —
     // so a single favicon can never be duplicated across hundreds of thousands of events.

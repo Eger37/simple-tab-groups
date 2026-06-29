@@ -99,22 +99,19 @@ const STUB = 'moz-extension://abcd-1234-uuid/help/stg-unsupported-url.html';
     check('null passes through', unwrapStubUrl(null) === null);
 }
 
-// --- sanitizeFavIconUrl: KEEP favicons (incl. data:), only drop PATHOLOGICAL ----
+// --- sanitizeFavIconUrl: DROP inline data: favicons, keep small URL refs, drop oversized ----
 {
-    // Favicons are KEPT so every synced/sleeping tab shows an icon. A normal 16–32px PNG
-    // data: favicon (~1–4 KB) is well under the ~50 KB cap and must pass through unchanged.
+    // Inline data: favicons are DROPPED (they caused the multi-GB syncDeltaLog bloat); the
+    // live page re-fetches the icon on load.
     const normalDataPng = 'data:image/png;base64,iVBORw0KGgoAAAANSUhEUg' + 'A'.repeat(2000);
-    check('normal data:image/png favicon KEPT', sanitizeFavIconUrl(normalDataPng) === normalDataPng);
-    check('short data: favicon KEPT', sanitizeFavIconUrl('data:image/x,abc') === 'data:image/x,abc');
+    check('normal data:image/png favicon dropped', sanitizeFavIconUrl(normalDataPng) === undefined);
+    check('short data: favicon dropped', sanitizeFavIconUrl('data:image/x,abc') === undefined);
 
-    // ONLY a pathologically large favicon (over the cap) is dropped — this is the bound that
-    // keeps a stray multi-hundred-KB blob out of the snapshot/log.
-    const hugeDataPng = 'data:image/png;base64,' + 'A'.repeat(MAX_SYNCABLE_FAVICON_LENGTH + 1);
-    check('pathological data: favicon (> cap) dropped', sanitizeFavIconUrl(hugeDataPng) === undefined);
+    // an oversized URL reference (over the cap) is also dropped.
     const longUrl = 'https://example.com/' + 'x'.repeat(MAX_SYNCABLE_FAVICON_LENGTH);
     check('oversized favicon url (> cap) dropped', sanitizeFavIconUrl(longUrl) === undefined);
 
-    // a favicon EXACTLY at the cap is still kept (boundary: only > cap is dropped).
+    // a URL favicon EXACTLY at the cap is still kept (boundary: only > cap is dropped).
     const atCap = 'x'.repeat(MAX_SYNCABLE_FAVICON_LENGTH);
     check('favicon at exactly the cap KEPT', sanitizeFavIconUrl(atCap) === atCap);
 
@@ -127,11 +124,11 @@ const STUB = 'moz-extension://abcd-1234-uuid/help/stg-unsupported-url.html';
     check('null favicon dropped', sanitizeFavIconUrl(null) === undefined);
     check('undefined favicon dropped', sanitizeFavIconUrl(undefined) === undefined);
 
-    // idempotent: a kept value stays kept; a clean one stays clean.
+    // idempotent: a kept URL stays kept; a dropped data: favicon stays dropped.
     check('sanitize idempotent on clean url',
         sanitizeFavIconUrl(sanitizeFavIconUrl('https://e/i.ico')) === 'https://e/i.ico');
-    check('sanitize idempotent on kept data: favicon',
-        sanitizeFavIconUrl(sanitizeFavIconUrl(normalDataPng)) === normalDataPng);
+    check('sanitize idempotent on dropped data: favicon',
+        sanitizeFavIconUrl(sanitizeFavIconUrl(normalDataPng)) === undefined);
 }
 
 // ---------------------------------------------------------------------------

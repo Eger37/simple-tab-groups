@@ -155,11 +155,10 @@ export function shouldNavigateLiveTabUrl(liveUrl, targetUrl) {
 }
 
 /**
- * Maximum length of a `favIconUrl` we are willing to carry in a synced record. We KEEP
- * favicons — including inline `data:` URIs — so every synced/sleeping tab shows an icon;
- * a normal 16–32px PNG favicon is ~1–4 KB. The cap exists only to drop a PATHOLOGICALLY
- * large favicon (a stray multi-hundred-KB data: blob) that would bloat the snapshot/log
- * out of proportion. ~50 000 chars ≈ 50 KB comfortably clears real favicons.
+ * Maximum length of a `favIconUrl` reference (http(s)/moz-extension URL) we are willing to
+ * carry in a synced record. Inline `data:` favicons are dropped outright (see
+ * {@link sanitizeFavIconUrl}); this cap only guards against a pathologically long URL
+ * reference. ~50 000 chars comfortably clears any real favicon URL.
  * @readonly
  */
 export const MAX_SYNCABLE_FAVICON_LENGTH = 50000;
@@ -167,19 +166,12 @@ export const MAX_SYNCABLE_FAVICON_LENGTH = 50000;
 /**
  * Sanitize a `favIconUrl` for storage in a delta event / snapshot record.
  *
- * Favicons are KEPT — including `data:` URIs — so every synced tab (and every sleeping
- * tab restored on another device) shows its icon. The cost is BOUNDED structurally: a
- * favicon is never its own event — it only ever rides along as one field inside a record
- * written for a real reason (tab.add / tab.modify on a url/title change, or the compaction
- * snapshot), so the resolved snapshot holds exactly one (latest) favicon per tab and a
- * single favicon can never be duplicated across hundreds of thousands of events again
- * (the original 5 GB bloat was a favicon-only event firing on every favicon tick).
- *
- * The ONLY thing dropped here (returns undefined) is a single PATHOLOGICALLY large favicon
- * — over {@link MAX_SYNCABLE_FAVICON_LENGTH} (~50 KB). That is far above a real 16–32px
- * favicon, so normal data: PNGs pass through unchanged. Favicons are cosmetic (they
- * re-fetch from the live page on load), so dropping an oversized one never affects tab
- * identity (url/title/group/pinned).
+ * Inline `data:` favicons are DROPPED (returns undefined): a single base64 PNG blob is
+ * 2–50 KB and, cloned into a tab/pinned record per tab on the bootstrap/compaction path,
+ * it inflated `syncDeltaLog` into multiple GB of RAM. Only small URL references
+ * (http(s)/moz-extension) are kept; the receiving machine re-fetches the actual icon from
+ * the live page on load. Favicons are cosmetic, so dropping the inline blob never affects
+ * tab identity (url/title/group/pinned).
  *
  * Pure string function (no `browser.*`). Returns `undefined` when the favicon must be
  * dropped, so callers can simply assign the result (an `undefined` field is omitted by
@@ -190,6 +182,9 @@ export const MAX_SYNCABLE_FAVICON_LENGTH = 50000;
  */
 export function sanitizeFavIconUrl(favIconUrl) {
     if (typeof favIconUrl !== 'string' || !favIconUrl) {
+        return undefined;
+    }
+    if (favIconUrl.startsWith('data:')) {
         return undefined;
     }
     if (favIconUrl.length > MAX_SYNCABLE_FAVICON_LENGTH) {
