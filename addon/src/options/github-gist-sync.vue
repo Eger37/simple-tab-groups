@@ -61,13 +61,7 @@ export default {
 </script>
 
 <template>
-<div class="box">
-    <div class="columns is-mobile is-vcentered">
-        <div class="column">
-            <span class="is-size-5" v-text="lang('githubGistSyncTitle')"></span>
-        </div>
-    </div>
-
+<div>
     <div class="field">
         <label class="checkbox">
             <input v-model="syncSleepNewTabs" type="checkbox" />
