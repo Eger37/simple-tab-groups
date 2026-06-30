@@ -289,7 +289,11 @@ async function runGrandRestore(restoredWindowIds) {
     // делаем активной другую вкладку и удаляем привязку окна к группе
     await Promise.all(activeTabs.map(async activeTab => {
         const win = allWindowsMap.get(activeTab.windowId);
-        const groupToKeep = groupsAlreadyRestored.get(win.groupId);
+        const groupToKeep = win && groupsAlreadyRestored.get(win.groupId);
+
+        if (!groupToKeep) {
+            return;
+        }
 
         log.log('processing active tab', activeTab.id, 'in window', activeTab.windowId, 'groupToKeep', groupToKeep.id, 'lastAccessed', groupToKeep.lastAccessed);
 
