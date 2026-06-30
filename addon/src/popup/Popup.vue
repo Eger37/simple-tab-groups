@@ -988,7 +988,7 @@ export default {
                 </p>
                 <div>
                     <div v-for="tab in unSyncTabs" :key="tab.id"
-                        @contextmenu="$refs.contextMenuTab.open($event, {tab})"
+                        @contextmenu="$refs.contextMenuTab.open($event, {tab, targetGroup: tab.windowId === currentWindow?.id ? currentGroup : undefined})"
                         @click.stop="($event.ctrlKey || $event.metaKey || $event.shiftKey) ? clickOnTab($event, tab) : unsyncHiddenTabsShowTabIntoCurrentWindow(tab)"
                         @keydown.enter="($event.ctrlKey || $event.metaKey || $event.shiftKey) ? clickOnTab($event, tab) : unsyncHiddenTabsShowTabIntoCurrentWindow(tab)"
                         @keydown.delete="removeTab(tab)"

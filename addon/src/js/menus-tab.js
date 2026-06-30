@@ -70,7 +70,7 @@ async function createMenus(settings = null) {
     // Group-scoped pin toggle for the clicked tab. First among STG's items so it sits at
     // the TOP of STG's section in the native tab menu (extensions can't go above Firefox's
     // own entries; first-among-STG-items is the achievable "top"). Hidden by default;
-    // menus.onShown reveals it (and sets the right label) only when the clicked tab is in a group.
+    // menus.onShown reveals it (and sets the right label) based on the clicked tab's group.
     await Menus.create({
         id: TOGGLE_GROUP_PIN_ID,
         parentId: PARENT_ID,
@@ -235,6 +235,11 @@ async function onMenusShown(info, tab) {
             visible: true,
             title: Lang(groupPinned ? 'unpinTabInGroupTitle' : 'pinTabInGroupTitle'),
         });
+    } else if (tab && Cache.getWindowGroup(tab.windowId)) {
+        await Menus.update(TOGGLE_GROUP_PIN_ID, {
+            visible: true,
+            title: Lang('pinTabInCurrentGroupTitle'),
+        });
     } else {
         await Menus.update(TOGGLE_GROUP_PIN_ID, {visible: false});
     }
@@ -351,18 +356,30 @@ export async function moveToGroup(groupId, info, tab) {
 export async function toggleGroupPin(info, tab) {
     const log = logger.start(toggleGroupPin, info, tab);
 
-    // Safe no-op for a tab without a group (e.g. a stale/always-rendered click): the menu
-    // is normally hidden for group-less tabs via onMenusShown, but guard anyway.
-    const groupId = Cache.getTabGroup(tab.id);
-
-    if (!groupId) {
-        log.stopWarn('clicked tab has no group, ignoring', tab.id);
+    if (Cache.getTabGroup(tab.id)) {
+        await Groups.setTabGroupPinned(tab.id, !Cache.getTabGroupPinned(tab.id));
+        log.stop('toggled group pin');
         return;
     }
 
-    await Groups.setTabGroupPinned(tab.id, !Cache.getTabGroupPinned(tab.id));
+    const targetGroupId = Cache.getWindowGroup(tab.windowId);
 
-    log.stop();
+    if (!targetGroupId) {
+        log.stopWarn('clicked tab has no group and window has no active group, ignoring', tab.id);
+        return;
+    }
+
+    const tabIds = await Tabs.getHighlightedIds(tab.windowId, tab);
+
+    for (const tabId of tabIds) {
+        if (Cache.getTabGroup(tabId)) {
+            continue;
+        }
+
+        await Groups.setTabGroupPinned(tabId, true, targetGroupId);
+    }
+
+    log.stop('pinned to current group');
 }
 
 export async function createNewGroup(info, tab) {
