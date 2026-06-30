@@ -442,8 +442,14 @@
         "description": "Exclude tabs with sound"
     },
     "notPossibleSwitchGroupBecauseSomeTabShareMicrophoneOrCamera": {
-        "message": "Неможливо змінити групу, тому що на одній з вкладок використовується мікрофон або камера",
-        "description": "It is not possible to change the group because one of the opened tabs share microphone or camera"
+        "message": "Ці вкладки використовують мікрофон, камеру або доступ до екрана і продовжать це робити: «$titles$». Натисніть тут, щоб переключитися все одно.",
+        "description": "Warning shown when switching a group would hide tabs that share microphone, camera or screen. Lists the tabs and lets the user switch anyway by clicking.",
+        "placeholders": {
+            "titles": {
+                "content": "$1",
+                "example": "some titles"
+            }
+        }
     },
     "foundHiddenUnSyncTabsDescription": {
         "message": "Знайдено приховані не синхронізовані вкладки. Натисніть на вкладку, щоб відобразити її в поточній групі/вікні або: ",

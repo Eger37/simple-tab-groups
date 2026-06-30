@@ -55,7 +55,7 @@ export async function applyByHistory(direction, windowId, groups) {
     return apply(windowId, nextGroupId, undefined, true);
 }
 
-export async function apply(windowId, groupId, activeTabId, applyFromHistory = false) {
+export async function apply(windowId, groupId, activeTabId, applyFromHistory = false, ignoreSharing = false) {
     const log = logger.start(apply, 'groupId:', groupId, 'windowId:', windowId, 'activeTabId:', activeTabId);
 
     windowId ||= await Windows.getLastFocusedNormalWindow();
@@ -122,8 +122,14 @@ export async function apply(windowId, groupId, activeTabId, applyFromHistory = f
             // group-pinned tabs are currently browser-pinned (so isCanNotBeHidden would
             // flag them), but we unpin them before hiding — exclude them from this guard,
             // which is meant to catch tabs sharing microphone/camera.
-            if (groupToHide?.tabs.some(tab => !isGroupPinned(tab) && Tabs.isCanNotBeHidden(tab))) {
-                Notification('notPossibleSwitchGroupBecauseSomeTabShareMicrophoneOrCamera');
+            const sharingTabs = groupToHide?.tabs.filter(tab => !isGroupPinned(tab) && Tabs.isCanNotBeHidden(tab)) || [];
+
+            if (sharingTabs.length && !ignoreSharing) {
+                const titles = sharingTabs.map(tab => Tabs.getTitle(tab, false, 20)).join(', ');
+                Notification(['notPossibleSwitchGroupBecauseSomeTabShareMicrophoneOrCamera', titles], {
+                    module: ['groups', 'apply', windowId, groupId, activeTabId, applyFromHistory, true],
+                    expires: Notification.MAX_EXPIRES,
+                });
                 throw '';
             }
 
