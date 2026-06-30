@@ -708,7 +708,7 @@ export async function tryRestoreMissedTabs(actionLoading = true) {
         await Browser.actionLoading();
     }
 
-    const allTabs = await Tabs.get(null, false, null).then(normalizeTabs);
+    const allTabs = await Tabs.get(null, null, null).then(normalizeTabs);
 
     // normalize blank tab urls
     for (const tab of allTabs) {
