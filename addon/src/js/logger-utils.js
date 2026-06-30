@@ -135,8 +135,14 @@ export function getFuncName(func) {
 
 export function normalizeArgumentValue(value) {
     if (value instanceof Error) return normalizeError(value);
-    if (typeof value === 'string' && value.length > MAX_STRING_LENGTH) {
-        return 'VERY_BIG_STRING_LENGTH_' + value.length + ': ' + value.slice(0, 200);
+    if (typeof value === 'string') {
+        if (value.startsWith('data:')) {
+            return 'data:<' + value.length + '>';
+        }
+        if (value.length > MAX_STRING_LENGTH) {
+            return 'VERY_BIG_STRING_LENGTH_' + value.length + ': ' + value.slice(0, 200);
+        }
+        return value;
     }
     if (Array.isArray(value)) return value.map(normalizeArgumentValue);
     if (value && typeof value === 'object') {
