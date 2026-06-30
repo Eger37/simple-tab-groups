@@ -101,6 +101,14 @@ export default {
                 </figure>
                 <span v-text="lang(data.tab.groupPinned ? 'unpinTabInGroupTitle' : 'pinTabInGroupTitle')"></span>
             </li>
+            <li
+                v-if="menu.includes('pin-in-group') && !data.group && data.targetGroup"
+                @click="$emit('pin-in-group', data.tab, true, data.targetGroup.id)">
+                <figure class="image is-16x16">
+                    <img src="/icons/thumbtack.svg" />
+                </figure>
+                <span v-text="lang('pinTabInCurrentGroupTitle')"></span>
+            </li>
 
             <template v-if="menu.includes('move-tab-to-group')">
                 <hr>

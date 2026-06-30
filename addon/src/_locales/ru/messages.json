@@ -747,6 +747,10 @@
         "message": "Выгрузить вкладку из памяти",
         "description": "Discard tab"
     },
+    "pinTabInCurrentGroupTitle": {
+        "message": "Закрепить в текущей группе",
+        "description": "Pin a tab that is not yet in a group into the window's active group (pinned only while that group is active)"
+    },
     "folderNameTitle": {
         "message": "Имя папки",
         "description": "Folder name title"

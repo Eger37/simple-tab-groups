@@ -635,7 +635,7 @@ export default {
                             tab.container && `identity-color-${tab.container?.color}`
                         ]"
                         :title="getTabTitle(tab, true)"
-                        @contextmenu.stop.prevent="$refs.contextMenuTab.open($event, {tab})"
+                        @contextmenu.stop.prevent="$refs.contextMenuTab.open($event, {tab, targetGroup: tab.windowId === currentWindow?.id ? currentGroup : undefined})"
 
                         @click.stop="clickOnTab($event, tab)"
 

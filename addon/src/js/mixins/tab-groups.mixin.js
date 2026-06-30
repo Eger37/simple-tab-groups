@@ -357,9 +357,9 @@ export default {
         discardTab(tab) {
             this.sendMessageModule('Tabs.discard', this.getTabIdsForMove(tab.id));
         },
-        toggleTabGroupPinned(tab, groupPinned) {
+        toggleTabGroupPinned(tab, groupPinned, targetGroupId) {
             // group-scoped pin: pinned only while the tab's group is active.
-            this.sendMessageModule('Groups.setTabGroupPinned', tab.id, groupPinned);
+            this.sendMessageModule('Groups.setTabGroupPinned', tab.id, groupPinned, targetGroupId);
         },
         discardGroup(group) {
             this.sendMessageModule('Tabs.discard', group.tabs.map(Tabs.extractId));

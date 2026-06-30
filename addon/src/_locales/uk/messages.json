@@ -747,6 +747,10 @@
         "message": "Вивантажити вкладку з пам'яті",
         "description": "Discard tab"
     },
+    "pinTabInCurrentGroupTitle": {
+        "message": "Закріпити в поточній групі",
+        "description": "Pin a tab that is not yet in a group into the window's active group (pinned only while that group is active)"
+    },
     "folderNameTitle": {
         "message": "Ім'я теки",
         "description": "Folder name title"

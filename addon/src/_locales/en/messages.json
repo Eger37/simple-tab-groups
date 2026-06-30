@@ -763,6 +763,10 @@
         "message": "Pin to group",
         "description": "Pin this tab within its group (pinned only while the group is active)"
     },
+    "pinTabInCurrentGroupTitle": {
+        "message": "Pin to current group",
+        "description": "Pin a tab that is not yet in a group into the window's active group (pinned only while that group is active)"
+    },
     "unpinTabInGroupTitle": {
         "message": "Unpin from group",
         "description": "Remove the group-scoped pin from this tab"
