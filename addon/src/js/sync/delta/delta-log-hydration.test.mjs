@@ -1,25 +1,26 @@
 /**
- * Standalone node test for the delta-log FIRST-HYDRATION RACE fix (E1, data loss).
+ * Standalone node test for the delta-log FIRST-HYDRATION RACE fix (E1, data loss) and the
+ * IndexedDB-backed store migration.
  *
  * Plain `node delta-log-hydration.test.mjs` (STG has no test runner). Unlike the sibling
  * delta tests, the contract under test lives INSIDE the impure `delta-log.js`
  * (`ensureLoaded()`'s lazy hydration + seq machinery), so re-implementing it would not test
  * the fix. Instead we load the REAL module and stub only its browser-dependent imports via
- * `delta-log-hydration.loader.mjs` (registered below) plus a controllable mock of
- * `browser.storage.local`.
+ * `delta-log-hydration.loader.mjs` (registered below), plus a controllable mock of
+ * `browser.storage.local` and a controllable in-memory mock of the IndexedDB store.
  *
  * The bug: `ensureLoaded()`'s only guard was `if (events !== null) return`, but `events` is
- * assigned AFTER `await browser.storage.local.get(...)`. Two concurrent first-touch callers
- * both saw `events === null`, both awaited the get, and the second OVERWROTE `events` with a
- * fresh stored array — dropping the event the first had already appended and recomputing
- * `lastSeq` from storage, so the next append reused a collided seq.
+ * assigned AFTER the awaited hydration read. Two concurrent first-touch callers both saw
+ * `events === null`, both awaited the read, and the second OVERWROTE `events` with a fresh
+ * stored array — dropping the event the first had already appended and recomputing `lastSeq`
+ * from storage, so the next append reused a collided seq.
  *
  * The fix memoizes the hydration as a single in-flight promise so all first-touch callers
- * await ONE get + migration. This test drives two operations that BOTH start before the
- * hydration's get resolves, then asserts: no event lost, seq strictly monotonic (no
- * collision), and exactly one underlying get was issued (proof of memoization). It also
- * checks the reset path (clear() lets a later hydration re-run) and that the favicon
- * migration still runs exactly once.
+ * await ONE read + migration. This test drives two operations that BOTH start before the
+ * hydration's read resolves, then asserts: no event lost, seq strictly monotonic (no
+ * collision), and exactly one underlying read was issued (proof of memoization). It also
+ * checks the reset path (clear() lets a later hydration re-run), the favicon migration, and
+ * the one-time storage.local -> IndexedDB migration.
  *
  * Intentionally NOT matched by eslint (config targets addon/**\/*.js, not .mjs); it uses
  * node globals (process, console, module.register) the browser config bans.
@@ -44,56 +45,78 @@ function check(name, cond, detail) {
 }
 
 /**
- * Controllable mock of `browser.storage.local`.
+ * Controllable in-memory mock of the IndexedDB delta-log store (`delta-log-store.js`).
  *
- * `get` returns a promise that ONLY resolves when the test calls `releaseGets()`, so two
+ * `load` returns a promise that ONLY resolves when the test calls `releaseLoads()`, so two
  * concurrent first-touch callers can both be parked mid-hydration — exactly the window the
- * old guard left open. `getCallCount` proves how many gets the module actually issued.
+ * old guard left open. `loadCallCount` proves how many loads the module actually issued.
+ * The loader stub reads/writes this object via `globalThis.__deltaLogIdb`.
  */
-function makeMockStorage(initial = {}) {
-    const store = {...initial};
-    let pendingGetResolvers = [];
+function makeMockIdb(record) {
+    let pendingLoadResolvers = [];
     const mock = {
-        getCallCount: 0,
-        setCallCount: 0,
-        async get(key) {
-            mock.getCallCount++;
-            // Snapshot the store AT CALL TIME (faithful to a real async get: the read is taken
-            // when issued, not when it resolves). This is what makes the buggy first-hydration
-            // race observable — a 2nd get issued before the 1st caller's append persists sees
-            // the OLD (e1-less) store and overwrites `events`, dropping e1.
-            const value = store[key];
-            const snapshot = value === undefined ? {} : {[key]: structuredClone(value)};
-            // park until released.
-            await new Promise(resolve => pendingGetResolvers.push(resolve));
+        record,
+        loadCallCount: 0,
+        saveCallCount: 0,
+        removeCallCount: 0,
+        async load() {
+            mock.loadCallCount++;
+            const snapshot = mock.record === undefined ? undefined : structuredClone(mock.record);
+            await new Promise(resolve => pendingLoadResolvers.push(resolve));
             return snapshot;
         },
-        async set(obj) {
-            mock.setCallCount++;
-            Object.assign(store, structuredClone(obj));
+        async save(rec) {
+            mock.saveCallCount++;
+            mock.record = structuredClone(rec);
         },
-        releaseGets() {
-            const resolvers = pendingGetResolvers;
-            pendingGetResolvers = [];
+        async remove() {
+            mock.removeCallCount++;
+            mock.record = undefined;
+        },
+        releaseLoads() {
+            const resolvers = pendingLoadResolvers;
+            pendingLoadResolvers = [];
             resolvers.forEach(r => r());
         },
-        // release the gets ONE AT A TIME, each followed by a full drain of the microtask
-        // queue, so the first caller's whole hydrate+append settles BEFORE the next get
-        // resolves. On the buggy code this forces the lossy ordering (the 2nd get overwrites
-        // `events` after the 1st already appended); on the fixed code there is only ever one
-        // get, so the rest are no-ops.
-        async releaseGetsSequentially() {
-            while (pendingGetResolvers.length) {
-                const next = pendingGetResolvers.shift();
+        async releaseLoadsSequentially() {
+            while (pendingLoadResolvers.length) {
+                const next = pendingLoadResolvers.shift();
                 next();
-                // let the freed caller run to completion (hydrate body, append, persist).
                 for (let i = 0; i < 50; i++) {
                     await Promise.resolve();
                 }
             }
         },
-        pendingGetCount() {
-            return pendingGetResolvers.length;
+        pendingLoadCount() {
+            return pendingLoadResolvers.length;
+        },
+    };
+    return mock;
+}
+
+/**
+ * Mock of `browser.storage.local`, used only for the legacy-migration path now: the delta log
+ * no longer writes here, but a one-time hydration reads (and then removes) a legacy
+ * `syncDeltaLog` key. `get`/`remove` are immediate; counts prove the migration touched it.
+ */
+function makeMockStorage(initial = {}) {
+    const store = {...initial};
+    const mock = {
+        getCallCount: 0,
+        setCallCount: 0,
+        removeCallCount: 0,
+        async get(key) {
+            mock.getCallCount++;
+            const value = store[key];
+            return value === undefined ? {} : {[key]: structuredClone(value)};
+        },
+        async set(obj) {
+            mock.setCallCount++;
+            Object.assign(store, structuredClone(obj));
+        },
+        async remove(key) {
+            mock.removeCallCount++;
+            delete store[key];
         },
         rawStore() {
             return store;
@@ -102,33 +125,39 @@ function makeMockStorage(initial = {}) {
     return mock;
 }
 
-/** Install a fresh mock + a freshly-imported delta-log module (module state is per-import). */
-async function freshLog(initial = {}) {
-    const mock = makeMockStorage(initial);
-    globalThis.browser = {storage: {local: mock}};
+/**
+ * Install a fresh IDB mock + storage.local mock + a freshly-imported delta-log module
+ * (module state is per-import). `idbRecord` seeds the IndexedDB store; `storageLocal` seeds
+ * the legacy storage.local store (e.g. {syncDeltaLog: {...}} to exercise migration).
+ */
+async function freshLog({idbRecord, storageLocal = {}} = {}) {
+    const idb = makeMockIdb(idbRecord);
+    globalThis.__deltaLogIdb = idb;
+    const storage = makeMockStorage(storageLocal);
+    globalThis.browser = {storage: {local: storage}};
     // cache-bust the import so each test gets pristine module-level `events`/`loadingPromise`.
     const mod = await import(`./delta-log.js?fresh=${Math.random()}`);
-    return {mock, mod};
+    return {idb, storage, mod};
 }
 
 // --- 1. THE RACE: two concurrent first-touch ops, both parked mid-hydration -------
 {
-    const {mock, mod} = await freshLog();
+    const {idb, mod} = await freshLog();
 
-    // both calls enter ensureLoaded() before any get resolves.
+    // both calls enter ensureLoaded() before any load resolves.
     const p1 = mod.append(mod.OPS.GROUP_ADD, {group: {id: 1, title: 'g1'}});
     const p2 = mod.append(mod.OPS.GROUP_ADD, {group: {id: 2, title: 'g2'}});
 
-    // let microtasks run so both callers have reached the awaited get.
+    // let microtasks run so both callers have reached the awaited load.
     await Promise.resolve();
     await Promise.resolve();
 
-    check('memoized hydration issues exactly ONE storage.get for concurrent first-touch',
-        mock.getCallCount === 1, `got ${mock.getCallCount}`);
+    check('memoized hydration issues exactly ONE store load for concurrent first-touch',
+        idb.loadCallCount === 1, `got ${idb.loadCallCount}`);
 
-    // release sequentially to FORCE the lossy ordering on buggy code (2nd get's overwrite
-    // lands after the 1st caller's append); a no-op past the first get on fixed code.
-    await mock.releaseGetsSequentially();
+    // release sequentially to FORCE the lossy ordering on buggy code (2nd load's overwrite
+    // lands after the 1st caller's append); a no-op past the first load on fixed code.
+    await idb.releaseLoadsSequentially();
     const [e1, e2] = await Promise.all([p1, p2]);
 
     const all = await mod.getEvents();
@@ -151,17 +180,17 @@ async function freshLog(initial = {}) {
 
 // --- 2. concurrent append + getEvents (capture racing the transport) --------------
 {
-    const {mock, mod} = await freshLog();
+    const {idb, mod} = await freshLog();
 
     const pAppend = mod.append(mod.OPS.TAB_ADD, {groupId: 1, tab: {uid: 't1', url: 'https://a', title: 'A'}});
     const pRead = mod.getEvents();
 
     await Promise.resolve();
     await Promise.resolve();
-    check('append racing getEvents still issues ONE get', mock.getCallCount === 1,
-        `got ${mock.getCallCount}`);
+    check('append racing getEvents still issues ONE load', idb.loadCallCount === 1,
+        `got ${idb.loadCallCount}`);
 
-    mock.releaseGets();
+    idb.releaseLoads();
     await Promise.all([pAppend, pRead]);
 
     const all = await mod.getEvents();
@@ -169,25 +198,23 @@ async function freshLog(initial = {}) {
         `events=${JSON.stringify(all.map(e => e.seq))}`);
 }
 
-// --- 3. hydration reads an EXISTING persisted log without losing the new append ----
+// --- 3. hydration reads an EXISTING persisted IDB log without losing the new append --
 {
-    const existing = {
-        syncDeltaLog: {
-            v: 1,
-            deviceId: 'test-device',
-            events: [
-                {seq: 1, ts: 1, op: 'group.add', group: {id: 1, title: 'g1'}},
-                {seq: 2, ts: 2, op: 'group.add', group: {id: 2, title: 'g2'}},
-            ],
-        },
+    const idbRecord = {
+        v: 1,
+        deviceId: 'test-device',
+        events: [
+            {seq: 1, ts: 1, op: 'group.add', group: {id: 1, title: 'g1'}},
+            {seq: 2, ts: 2, op: 'group.add', group: {id: 2, title: 'g2'}},
+        ],
     };
-    const {mock, mod} = await freshLog(existing);
+    const {idb, storage, mod} = await freshLog({idbRecord});
 
     const p1 = mod.append(mod.OPS.GROUP_ADD, {group: {id: 3, title: 'g3'}});
     const p2 = mod.getLastSeq();
     await Promise.resolve();
     await Promise.resolve();
-    mock.releaseGets();
+    idb.releaseLoads();
     const [appended] = await Promise.all([p1, p2]);
 
     const all = await mod.getEvents();
@@ -195,71 +222,72 @@ async function freshLog(initial = {}) {
         `len=${all.length}`);
     check('new event seq follows the persisted max (no collision with stored seqs)',
         appended.seq === 3, `seq=${appended.seq}`);
-    check('only one get for the concurrent first touch on a non-empty log',
-        mock.getCallCount === 1, `got ${mock.getCallCount}`);
+    check('only one load for the concurrent first touch on a non-empty log',
+        idb.loadCallCount === 1, `got ${idb.loadCallCount}`);
+    check('hydrating from IDB does not touch storage.local',
+        storage.getCallCount === 0 && storage.removeCallCount === 0,
+        `get=${storage.getCallCount} remove=${storage.removeCallCount}`);
 }
 
-// --- 4. favicon migration still runs exactly once on hydrate ----------------------
+// --- 4. favicon migration still runs exactly once on hydrate (from IDB) ------------
 {
-    const withFavicons = {
-        syncDeltaLog: {
-            v: 1,
-            deviceId: 'test-device',
-            events: [
-                {seq: 1, ts: 1, op: 'tab.add', groupId: 1, tab: {uid: 't1', url: 'https://a', title: 'A', favIconUrl: 'data:image/png;base64,AAAA'}},
-                {seq: 2, ts: 2, op: 'tab.modify', groupId: 1, tab: {uid: 't1', url: 'https://a', title: 'B', favIconUrl: 'https://a/favicon.ico'}},
-            ],
-        },
+    const idbRecord = {
+        v: 1,
+        deviceId: 'test-device',
+        events: [
+            {seq: 1, ts: 1, op: 'tab.add', groupId: 1, tab: {uid: 't1', url: 'https://a', title: 'A', favIconUrl: 'data:image/png;base64,AAAA'}},
+            {seq: 2, ts: 2, op: 'tab.modify', groupId: 1, tab: {uid: 't1', url: 'https://a', title: 'B', favIconUrl: 'https://a/favicon.ico'}},
+        ],
     };
-    const {mock, mod} = await freshLog(withFavicons);
+    const {idb, mod} = await freshLog({idbRecord});
 
     // two concurrent first-touch reads — migration must run once, not twice.
     const p1 = mod.getEvents();
     const p2 = mod.getEvents();
     await Promise.resolve();
     await Promise.resolve();
-    mock.releaseGets();
+    idb.releaseLoads();
     const [a] = await Promise.all([p1, p2]);
 
     check('migration strips favicons from all stored events', a.every(e => !Object.hasOwn(e.tab ?? {}, 'favIconUrl')),
         JSON.stringify(a));
-    // migration rewrites the log exactly once (one set for the migration). A second get-touch
-    // must not re-run the body, so no extra set beyond the single migration write.
-    check('migration rewrites the log exactly once (single set)', mock.setCallCount === 1,
-        `setCallCount=${mock.setCallCount}`);
-    check('a single get serves both concurrent first-touch reads', mock.getCallCount === 1,
-        `getCallCount=${mock.getCallCount}`);
+    // migration rewrites the log exactly once (one save for the migration). A second get-touch
+    // must not re-run the body, so no extra save beyond the single migration write.
+    check('favicon migration rewrites the log exactly once (single save)', idb.saveCallCount === 1,
+        `saveCallCount=${idb.saveCallCount}`);
+    check('a single load serves both concurrent first-touch reads', idb.loadCallCount === 1,
+        `loadCallCount=${idb.loadCallCount}`);
 
-    // a second touch after hydration completes must not re-hydrate (no extra get).
+    // a second touch after hydration completes must not re-hydrate (no extra load).
     await mod.getEvents();
-    check('post-hydration read does not re-issue a get', mock.getCallCount === 1,
-        `getCallCount=${mock.getCallCount}`);
+    check('post-hydration read does not re-issue a load', idb.loadCallCount === 1,
+        `loadCallCount=${idb.loadCallCount}`);
 }
 
 // --- 5. reset path: clear() lets a LATER hydration re-run cleanly ------------------
 {
-    const {mock, mod} = await freshLog();
+    const {idb, mod} = await freshLog();
 
     const p = mod.append(mod.OPS.GROUP_ADD, {group: {id: 1, title: 'g1'}});
     await Promise.resolve();
-    mock.releaseGets();
+    idb.releaseLoads();
     await p;
-    check('pre-clear: one get so far', mock.getCallCount === 1, `got ${mock.getCallCount}`);
+    check('pre-clear: one load so far', idb.loadCallCount === 1, `got ${idb.loadCallCount}`);
 
     await mod.clear();
-    const getsAfterClear = mock.getCallCount;
-    check('clear() reuses the already-resolved hydration (no extra get during clear)',
-        getsAfterClear === 1, `got ${getsAfterClear}`);
+    const loadsAfterClear = idb.loadCallCount;
+    check('clear() reuses the already-resolved hydration (no extra load during clear)',
+        loadsAfterClear === 1, `got ${loadsAfterClear}`);
 
     // clear() dropped the memoized promise, so the NEXT first touch re-runs hydration cleanly
-    // (re-issues a get) rather than being short-circuited by the stale resolved promise.
+    // (re-issues a load) rather than being short-circuited by the stale resolved promise.
     // clear() persisted the empty log, so the re-hydration reads back an empty log.
     const pRead = mod.getEvents();
     await Promise.resolve();
     await Promise.resolve();
     check('clear() dropped the memoized promise → a later first touch re-hydrates',
-        mock.getCallCount === getsAfterClear + 1, `got ${mock.getCallCount}`);
-    mock.releaseGets();
+        idb.loadCallCount === loadsAfterClear + 1, `got ${idb.loadCallCount}`);
+    idb.releaseLoads();
     check('clear() resets the log to empty', (await pRead).length === 0);
     check('clear() resets lastSeq to 0', (await mod.getLastSeq()) === 0);
 
@@ -270,18 +298,19 @@ async function freshLog(initial = {}) {
 
 // --- 6. a FAILED hydration is not cached forever — a later call retries -----------
 {
-    const mock = makeMockStorage();
+    const idb = makeMockIdb();
     let failNext = true;
-    const realGet = mock.get.bind(mock);
-    mock.get = async key => {
+    const realLoad = idb.load.bind(idb);
+    idb.load = async () => {
         if (failNext) {
             failNext = false;
-            mock.getCallCount++;
-            throw new Error('storage unavailable');
+            idb.loadCallCount++;
+            throw new Error('store unavailable');
         }
-        return realGet(key);
+        return realLoad();
     };
-    globalThis.browser = {storage: {local: mock}};
+    globalThis.__deltaLogIdb = idb;
+    globalThis.browser = {storage: {local: makeMockStorage()}};
     const mod = await import(`./delta-log.js?fresh=${Math.random()}`);
 
     let threw = false;
@@ -296,14 +325,14 @@ async function freshLog(initial = {}) {
     const p = mod.append(mod.OPS.GROUP_ADD, {group: {id: 1, title: 'g1'}});
     await Promise.resolve();
     await Promise.resolve();
-    mock.releaseGets();
+    idb.releaseLoads();
     const e = await p;
     check('a later first touch retries after a failed hydration', e?.seq === 1, `e=${JSON.stringify(e)}`);
 }
 
 // --- 7. appendMany: one persist for a batch, sequential seqs ----------------------
 {
-    const {mock, mod} = await freshLog();
+    const {idb, mod} = await freshLog();
 
     const batch = [
         {op: mod.OPS.GROUP_ADD, group: {id: 1, title: 'g1'}},
@@ -316,13 +345,13 @@ async function freshLog(initial = {}) {
     const p = mod.appendMany(batch);
     await Promise.resolve();
     await Promise.resolve();
-    mock.releaseGets();
+    idb.releaseLoads();
     const appended = await p;
 
     check('appendMany skips invalid ops but keeps the valid ones',
         appended.length === validCount, `len=${appended.length}`);
-    check('appendMany persists the whole batch in ONE set', mock.setCallCount === 1,
-        `setCallCount=${mock.setCallCount}`);
+    check('appendMany persists the whole batch in ONE save', idb.saveCallCount === 1,
+        `saveCallCount=${idb.saveCallCount}`);
 
     const batchSeqs = appended.map(e => e.seq);
     check('appendMany assigns sequential seqs from 1 with no gaps',
@@ -342,22 +371,75 @@ async function freshLog(initial = {}) {
 
 // --- 8. appendMany([]) is a no-op: no persist ------------------------------------
 {
-    const {mock, mod} = await freshLog();
+    const {idb, mod} = await freshLog();
 
     const pRead = mod.getEvents();
     await Promise.resolve();
     await Promise.resolve();
-    mock.releaseGets();
+    idb.releaseLoads();
     await pRead;
 
-    check('appendMany on an empty store issues no set during hydration',
-        mock.setCallCount === 0, `setCallCount=${mock.setCallCount}`);
+    check('appendMany on an empty store issues no save during hydration',
+        idb.saveCallCount === 0, `saveCallCount=${idb.saveCallCount}`);
 
     const result = await mod.appendMany([]);
     check('appendMany([]) returns an empty array', Array.isArray(result) && result.length === 0,
         JSON.stringify(result));
-    check('appendMany([]) issues no set', mock.setCallCount === 0,
-        `setCallCount=${mock.setCallCount}`);
+    check('appendMany([]) issues no save', idb.saveCallCount === 0,
+        `saveCallCount=${idb.saveCallCount}`);
+}
+
+// --- 9. legacy storage.local -> IndexedDB migration -------------------------------
+{
+    const legacy = {
+        syncDeltaLog: {
+            v: 1,
+            deviceId: 'test-device',
+            events: [
+                {seq: 1, ts: 1, op: 'group.add', group: {id: 1, title: 'g1'}},
+                {seq: 2, ts: 2, op: 'tab.add', groupId: 1, tab: {uid: 't1', url: 'https://a', title: 'A', favIconUrl: 'data:image/png;base64,AAAA'}},
+            ],
+        },
+    };
+    const {idb, storage, mod} = await freshLog({storageLocal: legacy});
+
+    // IDB is empty → hydration falls back to storage.local, adopts its events, saves to IDB,
+    // then removes the legacy key.
+    const pEvents = mod.getEvents();
+    await Promise.resolve();
+    idb.releaseLoads();
+    const events = await pEvents;
+    check('migration adopts the legacy storage.local events', events.length === 2,
+        `len=${events.length}`);
+    check('migration reads storage.local exactly once', storage.getCallCount === 1,
+        `getCallCount=${storage.getCallCount}`);
+    check('migration saves the adopted log into IndexedDB exactly once', idb.saveCallCount === 1,
+        `saveCallCount=${idb.saveCallCount}`);
+    check('migration removes the legacy storage.local key exactly once', storage.removeCallCount === 1,
+        `removeCallCount=${storage.removeCallCount}`);
+    check('migration removed the legacy syncDeltaLog from storage.local',
+        storage.rawStore().syncDeltaLog === undefined, JSON.stringify(storage.rawStore()));
+    check('migration persisted the adopted log into the IDB store',
+        Array.isArray(idb.record?.events) && idb.record.events.length === 2,
+        JSON.stringify(idb.record));
+    check('favicon strip still runs during the storage.local migration',
+        events.every(e => !Object.hasOwn(e.tab ?? {}, 'favIconUrl')), JSON.stringify(events));
+
+    // a second hydration reads from IDB and does NOT re-read or re-remove storage.local.
+    const {idb: idb2, storage: storage2, mod: mod2} = await freshLog({idbRecord: idb.record});
+    const pEvents2 = mod2.getEvents();
+    await Promise.resolve();
+    idb2.releaseLoads();
+    const events2 = await pEvents2;
+    check('second hydration reads from IndexedDB', events2.length === 2, `len=${events2.length}`);
+    check('second hydration issues exactly one IDB load', idb2.loadCallCount === 1,
+        `loadCallCount=${idb2.loadCallCount}`);
+    check('second hydration does NOT read storage.local', storage2.getCallCount === 0,
+        `getCallCount=${storage2.getCallCount}`);
+    check('second hydration does NOT remove storage.local', storage2.removeCallCount === 0,
+        `removeCallCount=${storage2.removeCallCount}`);
+    check('second hydration does not re-save (no further migration)', idb2.saveCallCount === 0,
+        `saveCallCount=${idb2.saveCallCount}`);
 }
 
 // ---------------------------------------------------------------------------

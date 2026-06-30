@@ -31,6 +31,13 @@ const STUBS = {
         export function getDeviceLabel() { return 'test-label'; }
         export function setDeviceLabel() {}
     `,
+    'stg:delta-log-store': `
+        function idb() { return globalThis.__deltaLogIdb; }
+        async function load() { return idb().load(); }
+        async function save(record) { return idb().save(record); }
+        async function remove() { return idb().remove(); }
+        export default { load, save, remove };
+    `,
 };
 
 const SPECIFIER_TO_STUB = {
@@ -38,6 +45,7 @@ const SPECIFIER_TO_STUB = {
     '/js/utils.js': 'stg:utils',
     '/js/logger.js': 'stg:logger',
     './device-id.js': 'stg:device-id',
+    './delta-log-store.js': 'stg:delta-log-store',
 };
 
 export async function resolve(specifier, context, nextResolve) {

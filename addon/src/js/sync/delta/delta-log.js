@@ -58,6 +58,7 @@ import '/js/prefixed-storage.js';
 import * as Utils from '/js/utils.js';
 import Logger from '/js/logger.js';
 import {getDeviceId} from './device-id.js';
+import DeltaLogStore from './delta-log-store.js';
 
 const logger = new Logger('DeltaLog');
 
@@ -157,8 +158,15 @@ function stripEventFavicon(event) {
  */
 function ensureLoaded() {
     return loadingPromise ??= (async () => {
-        const stored = await browser.storage.local.get(STORAGE_KEY);
-        const log = stored[STORAGE_KEY];
+        const fromIdb = await DeltaLogStore.load();
+
+        let migratedFromStorageLocal = false;
+        let log = fromIdb;
+        if (!log) {
+            const stored = await browser.storage.local.get(STORAGE_KEY);
+            log = stored[STORAGE_KEY];
+            migratedFromStorageLocal = Boolean(log);
+        }
 
         events = Array.isArray(log?.events) ? log.events : [];
         lastSeq = events.length ? events[events.length - 1].seq : 0;
@@ -171,7 +179,12 @@ function ensureLoaded() {
                 changed = true;
             }
         }
-        if (changed) {
+
+        if (migratedFromStorageLocal) {
+            logger.info('migrated delta log from storage.local to IndexedDB', {events: events.length});
+            await persist();
+            await browser.storage.local.remove(STORAGE_KEY);
+        } else if (changed) {
             logger.info('migrated stored delta log: stripped historical favicons', {events: events.length});
             await persist();
         }
@@ -187,12 +200,10 @@ function ensureLoaded() {
  * @returns {Promise<void>}
  */
 function persist() {
-    writeChain = writeChain.then(() => browser.storage.local.set({
-        [STORAGE_KEY]: {
-            v: SCHEMA_VERSION,
-            deviceId: getDeviceId(),
-            events,
-        },
+    writeChain = writeChain.then(() => DeltaLogStore.save({
+        v: SCHEMA_VERSION,
+        deviceId: getDeviceId(),
+        events,
     }));
 
     return writeChain;
