@@ -501,10 +501,12 @@ export async function setTabGroupPinned(tabId, groupPinned, targetGroupId) {
         if (tab) {
             tab.groupPinned = groupPinned;
 
-            if (groupPinned) {
-                // place the freshly-pinned tab at the FRONT of the group's pinned block
-                // (right after the window's global pinned tabs, before the group's other
-                // group-pinned tabs, which keep their relative order behind it).
+            const destinationGroupIsShownInTabWindow = Cache.getWindowGroup(tab.windowId) === groupId;
+
+            if (!destinationGroupIsShownInTabWindow) {
+                await unpinGroupTabs([tab]);
+                await Tabs.hide([tab], true);
+            } else if (groupPinned) {
                 const existingPinned = group.tabs.filter(t => t.id !== tabId && isGroupPinned(t));
                 await pinGroupTabs([tab, ...existingPinned], windowId);
             } else {
